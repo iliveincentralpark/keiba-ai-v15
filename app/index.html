@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI買い目ジェネレーター V15 AGENT MANAGER</title>
+    <link rel="stylesheet" href="css/style_v3.css?v=13">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+JP:wght@400;500;700;900&display=swap"
+        rel="stylesheet">
+    <meta name="theme-color" content="#0d1117">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon.png">
+    <style>
+        body {
+            padding-top: 230px !important;
+            background: #0d1117;
+            color: #c9d1d9;
+            font-family: 'Noto Sans JP', sans-serif;
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding-top: 330px !important;
+            }
+        }
+
+        .horse-tag.honmei {
+            border: 2px solid #d4af37 !important;
+            background: rgba(212, 175, 55, 0.2) !important;
+            box-shadow: 0 0 12px rgba(212, 175, 55, 0.4);
+        }
+
+        .glass-panel {
+            background: rgba(13, 17, 23, 0.97) !important;
+            backdrop-filter: blur(10px);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-container" style="max-width:600px; margin:0 auto; background:#161b22; min-height:100vh;">
+
+        <!-- Header -->
+        <header class="glass-panel"
+            style="position:fixed; top:0; width:100%; max-width:600px; left:50%; transform:translateX(-50%); z-index:2000; border-bottom:3px solid #d4af37; padding-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:15px 20px 10px;">
+                <div style="font-size:0.6rem; color:#8b949e;">AI KEIBA</div>
+                <h1 style="color:#d4af37; font-weight:900; font-size:1.1rem; margin:0;">
+                    AI BET GEN V15 <span
+                        style="background:#ffeb3b; color:#000; padding:2px 8px; border-radius:20px; font-size:0.5rem; font-weight:900; vertical-align:middle;">AGENT
+                        MANAGER</span>
+                </h1>
+                <div style="font-size:0.6rem; color:#8b949e;">v15</div>
+            </div>
+
+            <div style="padding:0 15px 10px;">
+                <input type="text" id="netkeiba-url" placeholder="netkeibaの出馬表URLを入力..."
+                    style="width:100%; box-sizing:border-box; background:rgba(0,0,0,0.5); border:1px solid #333; border-radius:8px; padding:12px; color:#fff; font-size:0.9rem; margin-bottom:10px;">
+                <div style="display:flex; gap:10px;">
+                    <div
+                        style="flex:1; background:rgba(0,0,0,0.4); border:1px solid #333; border-radius:8px; padding:8px 12px; display:flex; align-items:center; gap:8px;">
+                        <span style="font-size:0.75rem; color:#8b949e;">軍資金 ¥</span>
+                        <input type="number" id="user-budget" value="10000" step="1000" min="100"
+                            style="background:transparent; border:none; color:#ffeb3b; font-weight:900; font-size:1.1rem; width:100%;">
+                    </div>
+                    <button id="fetch-odds-btn"
+                        style="background:linear-gradient(135deg,#d4af37,#f0c040); color:#000; font-weight:900; border:none; padding:0 28px; border-radius:8px; cursor:pointer; font-size:1rem;">解析</button>
+                </div>
+            </div>
+
+            <div id="race-info-container"
+                style="padding:0 20px 5px; text-align:center; font-size:0.8rem; color:#8b949e;"></div>
+        </header>
+
+        <!-- Status -->
+        <section
+            style="margin:15px; padding:15px; background:linear-gradient(135deg,#161b22,#0d1117); border:1px solid rgba(212,175,55,0.25); border-radius:16px;">
+            <p style="color:#d4af37; font-weight:900; margin:0 0 4px;">🧠 V15: Agent Manager System</p>
+            <p style="font-size:0.72rem; color:#8b949e; margin:0;">各専門エージェント（Scoring, Strategy）がバックエンドで思考し、最適な買い目を提供します。
+            </p>
+        </section>
+
+        <!-- Results -->
+        <section style="padding:0 15px;">
+            <h2 style="font-size:0.8rem; color:#8b949e; font-weight:700; letter-spacing:1px; margin:15px 0;">▼ AI推奨 買い目
+            </h2>
+            <div id="bet-cards-container"></div>
+        </section>
+
+        <!-- Footer -->
+        <div
+            style="position:fixed; bottom:0; left:50%; transform:translateX(-50%); width:100%; max-width:600px; background:rgba(13,17,23,0.97); border-top:1px solid #333; display:flex; justify-content:space-between; align-items:center; padding:12px 25px; box-sizing:border-box; z-index:999;">
+            <a href="simulation.html" style="color:#58a6ff; text-decoration:none; font-size:0.8rem; font-weight:700;">📊
+                履歴管理</a>
+            <div style="text-align:right;">
+                <div style="font-size:0.65rem; color:#8b949e;">購入予定</div>
+                <div id="final-total" style="color:#ffeb3b; font-size:1.5rem; font-weight:900; line-height:1.1;">¥--
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bet Card Template -->
+    <template id="bet-card-template">
+        <article
+            style="background:#1c2128; border-radius:20px; border:1px solid #30363d; margin-bottom:1.2rem; overflow:hidden;">
+            <div class="card-header"
+                style="padding:14px 18px; border-bottom:1px solid rgba(255,255,255,0.06); display:flex; align-items:center; gap:12px; background:rgba(0,0,0,0.2);">
+                <div class="badge"
+                    style="width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:1.2rem; background:linear-gradient(135deg,#d4af37,#f0c040);">
+                </div>
+                <h3 class="card-title" style="margin:0; font-size:1rem; color:#fff; font-weight:900;"></h3>
+            </div>
+            <div style="padding:15px 18px;">
+                <div class="card-reasoning"
+                    style="background:rgba(0,0,0,0.3); padding:12px; border-radius:12px; border-left:4px solid #d4af37; margin-bottom:12px;">
+                </div>
+                <div class="bet-details"></div>
+            </div>
+            <div
+                style="padding:12px 18px; border-top:1px solid rgba(255,255,255,0.05); background:rgba(0,0,0,0.15); display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <div class="price-calc" style="font-size:0.72rem; color:#8b949e;"></div>
+                    <div class="price-total" style="font-size:1.2rem; font-weight:900; color:#fff;"></div>
+                </div>
+                <button class="save-btn"
+                    style="background:#d4af37; color:#000; border:none; padding:9px 22px; border-radius:30px; font-weight:900; cursor:pointer;">保存</button>
+            </div>
+        </article>
+    </template>
+
+    <!-- Service Workerの登録 (PWA) -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('Service Worker registered', reg))
+                    .catch(e => console.error('SW Registration Failed', e));
+            });
+        }
+    </script>
+    <!-- V15 メインスクリプト -->
+    <script src="js/app_v15.js"></script>
+</body>
+
+</html>

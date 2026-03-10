@@ -1,0 +1,238 @@
+:root {
+  --bg-color: #0d1117;
+  --bg-panel: #161b22;
+  --border-color: rgba(255, 255, 255, 0.1);
+  --text-primary: #f0f6fc;
+  --text-secondary: #8b949e;
+  --accent-gold: #d4af37;
+  --accent-blue: #2f81f7;
+  --accent-green: #3fb950;
+
+  --font-main: 'Inter', 'Noto Sans JP', sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-main);
+  background-color: var(--bg-color);
+  color: var(--text-primary);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  padding-bottom: 120px;
+  background-attachment: fixed;
+}
+
+.app-container {
+  max-width: 600px;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+
+/* Header */
+header {
+  padding: 1rem;
+  z-index: 1000;
+  border-bottom: 2px solid var(--accent-gold);
+  border-radius: 0 0 20px 20px;
+  background: #0d1117 !important;
+  /* 強制的な不透明背景 */
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+}
+
+.header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  padding: 0.4rem;
+  cursor: pointer;
+}
+
+/* Odds Fetch Area */
+.odds-fetch-area {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+}
+
+.odds-fetch-area input[type="text"] {
+  flex: 1;
+  min-width: 140px;
+  padding: 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.budget-input-wrapper {
+  display: flex;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 0 0.5rem;
+  height: 38px;
+}
+
+#fetch-odds-btn {
+  height: 38px;
+  padding: 0 1rem;
+  border-radius: 8px;
+  font-weight: 700;
+  background: var(--accent-blue);
+  color: white;
+  border: none;
+}
+
+.analysis-link {
+  height: 38px;
+  padding: 0 0.75rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(212, 175, 55, 0.1);
+  border: 1px solid var(--accent-gold);
+  color: var(--accent-gold);
+  border-radius: 8px;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+/* Status Board */
+.status-board {
+  margin: 1rem;
+  padding: 1rem;
+  border-radius: 16px;
+  display: flex;
+  gap: 1rem;
+  background: linear-gradient(145deg, #161b22, #0d1117);
+  border: 1px solid rgba(88, 166, 255, 0.3);
+}
+
+.status-title {
+  font-weight: 900;
+  color: #ffeb3b;
+  margin-bottom: 0.5rem;
+}
+
+.metric-value {
+  font-size: 1.4rem;
+  font-weight: 900;
+  color: #fff;
+}
+
+/* Bet Cards */
+.bet-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  margin: 1rem;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.bet-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 100%;
+  background: var(--accent-gold);
+}
+
+.card-header {
+  padding: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.card-body {
+  padding: 1rem;
+}
+
+.card-reasoning {
+  font-size: 0.8rem;
+  color: #8b949e;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 0.6rem;
+  border-radius: 8px;
+  margin-bottom: 1rem;
+}
+
+.horse-tag {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid #30363d;
+  background: #21262d;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.horse-tag.honmei {
+  color: #d4af37;
+  border-color: #d4af37;
+  background: rgba(212, 175, 55, 0.1);
+  font-size: 1.1rem;
+}
+
+.card-footer {
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.price-total {
+  font-size: 1.3rem;
+  font-weight: 900;
+  color: #fff;
+}
+
+.action-bar {
+  position: fixed;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 600px;
+  padding: 1rem;
+  background: #161b22;
+  border-top: 1px solid var(--border-color);
+  border-radius: 20px 20px 0 0;
+  z-index: 2001;
+}
+
+@media (max-width: 480px) {
+  .odds-fetch-area {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .budget-input-wrapper {
+    width: 100%;
+  }
+}

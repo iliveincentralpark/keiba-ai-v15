@@ -1,0 +1,61 @@
+{
+  "race_info": {
+    "name": "東京11R フェブラリーS (G1)",
+    "course": "東京 ダ1600m",
+    "time": "15:40",
+    "condition": "良",
+    "roughness": "🛡️ 堅実",
+    "is_rough": false
+  },
+  "predictions": {
+    "honmei": {
+      "number": 14,
+      "name": "ウィルソンテソーロ",
+      "confidence": 0.85
+    },
+    "taikou": {
+      "number": 5,
+      "name": "オメガギネス",
+      "confidence": 0.75
+    },
+    "aite": [
+      {
+        "number": 4,
+        "name": "ドゥラエレーデ",
+        "confidence": 0.65
+      },
+      {
+        "number": 11,
+        "name": "レッドルゼル",
+        "confidence": 0.55
+      },
+      {
+        "number": 7,
+        "name": "ガイアフォース",
+        "confidence": 0.50
+      },
+      {
+        "number": 13,
+        "name": "レッドルゼル",
+        "confidence": 0.45
+      },
+      {
+        "number": 10,
+        "name": "タガノビューティー",
+        "confidence": 0.40
+      }
+    ],
+    "ana": [
+      {
+        "number": 16,
+        "name": "アルファマム",
+        "confidence": 0.30
+      },
+      {
+        "number": 9,
+        "name": "ペプチドナイル",
+        "confidence": 0.25
+      }
+    ]
+  }
+}

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI学習・収支シミュレーター V5</title>
+  <style>
+    body {
+      background: #0d1117;
+      color: #c9d1d9;
+      font-family: 'Noto Sans JP', sans-serif;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+      padding-top: 20px;
+    }
+
+    .upload-area {
+      border: 2-px dashed #30363d;
+      padding: 40px;
+      border-radius: 20px;
+      cursor: pointer;
+      background: rgba(255, 255, 255, 0.02);
+      transition: 0.2s;
+    }
+
+    .upload-area:hover {
+      border-color: #d4af37;
+      background: rgba(212, 175, 55, 0.05);
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-top: 20px;
+    }
+
+    .summary-card {
+      background: #161b22;
+      padding: 15px;
+      border-radius: 12px;
+      border: 1px solid #30363d;
+    }
+
+    .label {
+      font-size: 0.7rem;
+      color: #8b949e;
+      margin-bottom: 5px;
+    }
+
+    .value {
+      font-size: 1.2rem;
+      font-weight: 900;
+    }
+
+    .nav-link {
+      display: inline-block;
+      margin-top: 40px;
+      color: #58a6ff;
+      text-decoration: none;
+      font-weight: 700;
+      border: 1px solid #333;
+      padding: 10px 25px;
+      border-radius: 50px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1 style="color:#d4af37; font-size:1.4rem;">収支シミュレーター & AI学習</h1>
+    <p style="font-size:0.8rem; color:#8b949e; margin-bottom:30px;">CSVを読み込んでAIにあなたの「勝ちパターン」を学習させます</p>
+
+    <div id="upload-area" class="upload-area">
+      <div style="font-size:3rem; margin-bottom:15px;">📁</div>
+      <p>CSVファイルをここにドロップ<br>またはクリックして選択</p>
+      <input type="file" id="csv-file-input" style="display:none;" accept=".csv">
+    </div>
+
+    <div id="results-area" style="display:none;">
+      <h3 style="margin-top:30px; font-size:1rem; border-bottom:1px solid #333; padding-bottom:10px;">📊 CSV解析結果</h3>
+      <div id="summary-grid" class="summary-grid"></div>
+    </div>
+
+    <div id="empty-state" style="margin-top:40px; color:#8b949e; font-size:0.8rem;">
+      ※読み込み可能なCSV形式: 馬名,人気,購入額,払戻,的中,レース名,券種,買い方 等
+    </div>
+
+    <a href="index.html" class="nav-link">🏇 AI予想・解析画面へ戻る</a>
+  </div>
+
+  <script src="js/simulation_v5.js?v=1772810000000"></script>
+</body>
+
+</html>
