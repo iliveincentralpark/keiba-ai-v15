@@ -153,8 +153,10 @@ async function saveBet(btn, bet) {
 async function fetchAnalysis() {
     const urlEl = safeEl('netkeiba-url');
     if (!urlEl) return;
-    const match = urlEl.value.trim().match(/race_id=(\d{12})/) || urlEl.value.trim().match(/race\/(\d{12})/);
-    if (!match) { showError("netkeibaのURLを入力してください"); return; }
+    const urlValue = urlEl.value.trim();
+    // スマホ版 (race.sp.netkeiba.com) も PC版 (race.netkeiba.com) も両方対応できるよう、12桁の数字を抽出
+    const match = urlValue.match(/race_id=(\d{12})/) || urlValue.match(/race\/(\d{12})/) || urlValue.match(/(\d{12})/);
+    if (!match) { showError("netkeibaのURLまたは12桁のレースIDを入力してください"); return; }
 
     const budget = parseInt(safeEl('user-budget')?.value) || 10000;
     const btn = safeEl('fetch-odds-btn');
