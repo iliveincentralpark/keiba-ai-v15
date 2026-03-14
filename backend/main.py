@@ -10,9 +10,14 @@ from pathlib import Path
 import uvicorn
 import time
 from agents.manager import AgentManager
+from database import init_db
 
 app = FastAPI(title="Keiba Scraper API V5")
 agent_manager = AgentManager()
+
+@app.on_event("startup")
+def startup_event():
+    init_db()
 
 DB_FILE = Path(__file__).parent / "keiba_data.db"
 
@@ -97,13 +102,27 @@ def parse_horses(html: str, race_id: str):
     if rows_live:
         api_data = fetch_odds_api(race_id)
         time_data = fetch_time_index(race_id) # V8
-        for row in rows_live:
+        for idx, row in enumerate(rows_live, 1):
             if 'Cancel' in row.get('class', []): continue
+            
             num = None
+            # 1. Umabanカラムから取得を試みる
             umaban_td = row.select_one('.Umaban') or row.select_one('td[class*="Umaban"]')
-            if umaban_td and umaban_td.get_text(strip=True).isdigit():
-                num = int(umaban_td.get_text(strip=True))
-            if num is None: continue
+            if umaban_td:
+                u_text = umaban_td.get_text(strip=True)
+                if u_text.isdigit():
+                    num = int(u_text)
+            
+            # 2. カラムが空の場合はID属性から取得を試みる (例: tr_16)
+            if num is None:
+                row_id = row.get('id', '')
+                id_match = re.search(r'tr_(\d+)', row_id)
+                if id_match:
+                    num = int(id_match.group(1))
+            
+            # 3. それでも取れない場合はリストの順序を暫定番号とする
+            if num is None:
+                num = idx
             name_elem = row.select_one('.HorseName a') or row.select_one('.HorseName')
             name = name_elem.get_text(strip=True) if name_elem else f"馬#{num}"
             pop = None

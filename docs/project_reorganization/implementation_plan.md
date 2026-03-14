@@ -20,7 +20,7 @@
 
 ### CSVフォーマット拡張
 
-#### [MODIFY] [馬券投票履歴20260221.csv](file:///Users/kojimarei/Desktop/Antigravity/keiba_project/analysis/馬券投票履歴20260221.csv)
+#### [MODIFY] [馬券投票履歴20260221.csv](file:///Volumes/ExternalSSD/Antigravity/keiba_project/analysis/馬券投票履歴20260221.csv)
 **追加列（既存列の後ろに追加）：**
 
 | 新列名 | 説明 | 例 |
@@ -37,7 +37,7 @@
 
 ### 回収率シミュレーション画面（Web UI）
 
-#### [NEW] [simulation.html](file:///Users/kojimarei/Desktop/Antigravity/keiba_project/app/simulation.html)
+#### [NEW] [simulation.html](file:///Volumes/ExternalSSD/Antigravity/keiba_project/app/simulation.html)
 - 既存の `index.html` と同じダーク+グラスモーフィズムのデザイン
 - CSVアップロード or API経由で過去データ読み込み
 - 表示内容:
@@ -46,7 +46,7 @@
   - **月別推移**: 月ごとの投資vs回収の折れ線グラフ
   - **買い方別分析**: 1頭軸/2頭軸/BOX/フォーメーション別の成績テーブル
 
-#### [NEW] [js/simulation.js](file:///Users/kojimarei/Desktop/Antigravity/keiba_project/app/js/simulation.js)
+#### [NEW] [js/simulation.js](file:///Volumes/ExternalSSD/Antigravity/keiba_project/app/js/simulation.js)
 - CSVパーサー（Papa Parse等は不要、自前で軽量実装）
 - 集計ロジック（`analyze.py` 相当をJSで実装）
 - Chart.js（CDN）を使ったグラフ描画
@@ -55,7 +55,7 @@
 
 ### バックエンド拡張
 
-#### [MODIFY] [app.py](file:///Users/kojimarei/Desktop/Antigravity/keiba_project/app/app.py)
+#### [MODIFY] [app.py](file:///Volumes/ExternalSSD/Antigravity/keiba_project/app/app.py)
 - `/api/history` エンドポイント追加: CSVを読み込みJSON返却
 - `/api/history/add` エンドポイント追加: 新規レコードをCSVに追記（買い目確定時に自動保存）
 
@@ -63,7 +63,7 @@
 
 ### ナビゲーション追加
 
-#### [MODIFY] [index.html](file:///Users/kojimarei/Desktop/Antigravity/keiba_project/app/index.html)
+#### [MODIFY] [index.html](file:///Volumes/ExternalSSD/Antigravity/keiba_project/app/index.html)
 - ヘッダーに「📊 成績分析」へのリンクボタン追加
 
 ---

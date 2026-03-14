@@ -18,6 +18,6 @@
 - [ ] **ブラウザコンソールログの精査**: 抽出失敗時のフロントエンド側のエラーハンドリング（`renderApp` が空で呼ばれていないか等）の確認。
 
 ## 重要なファイル
-- [app.js](file:///Users/kojimarei/Desktop/Antigravity/horse_bet_web/js/app.js): 買い目ロジックの核心。
-- [app.py](file:///Users/kojimarei/Desktop/Antigravity/horse_bet_web/app.py): URL変換とFlaskバックエンド。
-- [scraper.py](file:///Users/kojimarei/Desktop/Antigravity/horse_bet_web/scraper.py): スクレイピングのベース。
+- [app.js](file:///Volumes/ExternalSSD/Antigravity/horse_bet_web/js/app.js): 買い目ロジックの核心。
+- [app.py](file:///Volumes/ExternalSSD/Antigravity/horse_bet_web/app.py): URL変換とFlaskバックエンド。
+- [scraper.py](file:///Volumes/ExternalSSD/Antigravity/horse_bet_web/scraper.py): スクレイピングのベース。

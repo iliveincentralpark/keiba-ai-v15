@@ -13,7 +13,7 @@
 1. ターミナルを開きます。
 2. アプリのディレクトリに移動します:
    ```bash
-   cd /Users/kojimarei/Desktop/Antigravity/horse_bet_web
+   cd /Volumes/ExternalSSD/Antigravity/horse_bet_web
    ```
 3. 以下のコマンドでFlaskサーバーを起動します:
    ```bash
@@ -25,7 +25,7 @@
 1. **別の新しいターミナル**を開きます（またはターミナルの「新しいタブ」などを開きます）。
 2. 同じくアプリのディレクトリに移動します:
    ```bash
-   cd /Users/kojimarei/Desktop/Antigravity/horse_bet_web
+   cd /Volumes/ExternalSSD/Antigravity/horse_bet_web
    ```
 3. 以下のコマンドでローカルWebサーバーを起動します:
    ```bash

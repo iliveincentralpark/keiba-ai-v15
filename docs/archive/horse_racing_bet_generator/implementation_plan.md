@@ -9,7 +9,7 @@ Pythonで過去の競馬成績データ(プロファイル)から抽出した「
 ## Proposed Changes
 
 ### 1. Webアプリケーション基礎
-プロジェクトルート(`/Users/kojimarei/Desktop/Antigravity/horse_bet_web`)に Vite + React + TypeScript 環境をセットアップします。
+プロジェクトルート(`/Volumes/ExternalSSD/Antigravity/horse_bet_web`)に Vite + React + TypeScript 環境をセットアップします。
 
 ### 2. コアロジック (TypeScript)
 #### [NEW] `src/lib/betLogic.ts`

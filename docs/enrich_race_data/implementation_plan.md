@@ -9,7 +9,7 @@
 
 ### [分析コンポーネント]
 
-#### [MODIFY] [馬券投票履歴_enriched.csv](file:///Users/kojimarei/Desktop/Antigravity/keiba_project/analysis/馬券投票履歴_enriched.csv)
+#### [MODIFY] [馬券投票履歴_enriched.csv](file:///Volumes/ExternalSSD/Antigravity/keiba_project/analysis/馬券投票履歴_enriched.csv)
 - 指定されたレースの情報をURLから取得した最新のデータで更新または補完します。
 
 ## 検証計画
