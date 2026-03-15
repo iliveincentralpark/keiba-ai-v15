@@ -109,7 +109,7 @@ def parse_horses(html: str, race_id: str):
     if rows_live:
         api_data = fetch_odds_api(race_id)
         time_data = fetch_time_index(race_id) # V8
-        for idx, row in enumerate(rows_live, 1):
+        for row in rows_live:
             if 'Cancel' in row.get('class', []): continue
             
             num = None
@@ -129,16 +129,19 @@ def parse_horses(html: str, race_id: str):
                     if 1 <= maybe_num <= 18:
                         num = maybe_num
             
-            # 3. それでも取れない場合はリストの順序を暫定番号とする
             if num is None:
-                num = idx
+                continue
 
             name_elem = (
                 row.select_one('.HorseName a')
                 or row.select_one('.HorseName')
                 or row.select_one('a[href*="/horse/"]')
             )
-            name = name_elem.get_text(strip=True) if name_elem else f"馬#{num}"
+            if not name_elem:
+                continue
+            name = name_elem.get_text(strip=True)
+            if not name:
+                continue
 
             pop = None
             pop_td = row.select_one('.Popular, .Popular_Ninki, td[class*="Popular"]')
@@ -162,6 +165,8 @@ def parse_horses(html: str, race_id: str):
             
             # 実力インデックス (V8)
             ability = time_data.get(num, {"max": 0, "avg": 0, "last": 0})
+            if num in horses:
+                continue
             horses[num] = {"name": name, "odds": od, "popularity": pop, "ability": ability}
         return horses, race_name
 
