@@ -1,4 +1,3 @@
-import random
 import math
 
 class ScoringAgent:
@@ -10,7 +9,8 @@ class ScoringAgent:
         全頭スコアリング (V14ロジックをベースに移植)
         horses_list: list of dicts with {number, name, odds, popularity, ability}
         """
-        strong_jiku_pops = [1, 2, 3, 4, 5]
+        strong_jiku_pops = set(user_profile.get("strong_pops", [])) if user_profile else set()
+        pop_weights = user_profile.get("pop_weights", {}) if user_profile else {}
         scored = []
         for h in horses_list:
             item = {
@@ -40,18 +40,19 @@ class ScoringAgent:
                 item["stability"] *= 0.35
 
             # 5. User Match (DNA) ボーナス
-            jiku_bonus = 1.3 if item["popularity"] in strong_jiku_pops else 1.0
-            db_bonus = 1.0
-            if user_profile and user_profile.get("strong_pops"):
-                if item["popularity"] in user_profile["strong_pops"]:
-                    db_bonus = 1.2
+            jiku_bonus = 1.22 if item["popularity"] in strong_jiku_pops else 1.0
+            pop_weight = float(pop_weights.get(str(item["popularity"]), 1.0))
+            if 4 <= item["popularity"] <= 6 and not pop_weights:
+                pop_weight = 1.08
+            if item["popularity"] == 1 and item["odds"] < 2.0:
+                pop_weight *= 0.82
+            db_bonus = pop_weight
             
             item["jiku_bonus"] = jiku_bonus
             item["db_bonus"] = db_bonus
 
             # 6. 最終スコア
-            r = 0.9 + random.random() * 0.2
-            item["score"] = item["stability"] * item["value"] * item["ability_score"] * jiku_bonus * db_bonus * 2.0 * r
+            item["score"] = item["stability"] * item["value"] * item["ability_score"] * jiku_bonus * db_bonus * 2.0
 
             scored.append(item)
 

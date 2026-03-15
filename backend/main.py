@@ -4,22 +4,29 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import sqlite3
 import requests
+import os
 from bs4 import BeautifulSoup
 import re
 from pathlib import Path
 import uvicorn
 import time
-from agents.manager import AgentManager
-from database import init_db
+import math
+try:
+    from .agents.manager import AgentManager
+    from .database import init_db
+except ImportError:
+    from agents.manager import AgentManager
+    from database import init_db
 
 app = FastAPI(title="Keiba Scraper API V5")
 agent_manager = AgentManager()
 
 @app.on_event("startup")
 def startup_event():
-    init_db()
+    result = init_db()
+    print(f"DB ready. seeded={result.get('seeded', 0)} total={result.get('history_count', 0)}")
 
-DB_FILE = Path(__file__).parent / "keiba_data.db"
+DB_FILE = Path(os.getenv("DB_FILE_PATH", str(Path(__file__).parent / "keiba_data.db")))
 
 # CORS
 app.add_middleware(
@@ -216,32 +223,11 @@ def predict_race(race_id: str, budget: int = 10000):
         "predictions": predictions
     }
 
-@app.get("/api/user_profile")
-def get_user_profile():
-    """過去の履歴からユーザーの得意な人気帯、券種を分析 (V8)"""
-    try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT jiku_pops, is_hit, bet_type, amount, refund FROM bet_history")
-        rows = cursor.fetchall()
-        conn.close()
-        if not rows: return {"success": True, "profile": None}
-        pop_counts = {}
-        for r in rows:
-            pops = str(r['jiku_pops']).split(',')
-            if pops and pops[0].isdigit():
-                p = int(pops[0])
-                if p not in pop_counts: pop_counts[p] = {"hits": 0, "total": 0}
-                pop_counts[p]["total"] += 1
-                if r['is_hit']: pop_counts[p]["hits"] += 1
-        strong_pops = [p for p, v in pop_counts.items() if v['total'] >= 3 and (v['hits']/v['total']) > 0.25]
-        return {"success": True, "profile": {"strong_pops": strong_pops, "total_records": len(rows)}}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
 class BetHistoryItem(BaseModel):
     race_id: str
+    race_date: str = ""
+    venue: str = ""
+    distance: str = ""
     race_name: str = ""
     bet_type: str
     bet_method: str
@@ -255,6 +241,180 @@ class BetHistoryItem(BaseModel):
     aite_pops: str = ""
     jiku_odds: str = ""
     aite_odds: str = ""
+    is_hit: int = 0
+    refund: int = 0
+
+
+def parse_multi_value_numbers(value: str) -> list[float]:
+    values = []
+    for part in str(value or "").replace("|", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            values.append(float(part))
+        except ValueError:
+            continue
+    return values
+
+
+def infer_axis_count(row: sqlite3.Row) -> int:
+    horses = [v for v in re.split(r"[|,]", str(row["jiku_horses"] or "")) if v.strip()]
+    if horses:
+        return len(horses)
+
+    method = str(row["bet_method"] or "")
+    if "2頭軸" in method:
+        return 2
+    if "1頭軸" in method or "流し" in method:
+        return 1
+    if "BOX" in method:
+        return 0
+    if "フォーメーション" in method:
+        return 2
+    return 0
+
+
+def build_user_profile(rows: list[sqlite3.Row]):
+    if not rows:
+        return None
+
+    pop_stats = {}
+    pop_band_stats = {}
+    strategy_stats = {}
+    axis_stats = {}
+    preferred_point_sizes = []
+
+    for row in rows:
+        is_hit = int(row["is_hit"] or 0)
+        amount = int(row["amount"] or 0)
+        refund = int(row["refund"] or 0)
+        points = int(row["points"] or 0)
+        if points > 0:
+            preferred_point_sizes.append(points)
+
+        pops = parse_multi_value_numbers(row["jiku_pops"])
+        if pops:
+            pop = int(pops[0])
+            pop_entry = pop_stats.setdefault(pop, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
+            pop_entry["total"] += 1
+            pop_entry["hits"] += is_hit
+            pop_entry["amount"] += amount
+            pop_entry["refund"] += refund
+
+            band = "1-3人気" if pop <= 3 else "4-6人気" if pop <= 6 else "7人気以下"
+            band_entry = pop_band_stats.setdefault(band, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
+            band_entry["total"] += 1
+            band_entry["hits"] += is_hit
+            band_entry["amount"] += amount
+            band_entry["refund"] += refund
+
+        strategy_key = (str(row["bet_type"] or "不明"), str(row["bet_method"] or "不明"))
+        strategy_entry = strategy_stats.setdefault(strategy_key, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
+        strategy_entry["total"] += 1
+        strategy_entry["hits"] += is_hit
+        strategy_entry["amount"] += amount
+        strategy_entry["refund"] += refund
+
+        axis_count = infer_axis_count(row)
+        axis_entry = axis_stats.setdefault(axis_count, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
+        axis_entry["total"] += 1
+        axis_entry["hits"] += is_hit
+        axis_entry["amount"] += amount
+        axis_entry["refund"] += refund
+
+    pop_weights = {}
+    strong_pops = []
+    for pop, stats in pop_stats.items():
+        hit_rate = stats["hits"] / stats["total"] if stats["total"] else 0
+        roi = stats["refund"] / stats["amount"] if stats["amount"] else 0
+        if stats["total"] >= 2:
+            pop_weights[str(pop)] = round(0.85 + min(0.55, hit_rate * 0.8 + max(0.0, roi - 1.0) * 0.18), 3)
+        if stats["total"] >= 2 and (hit_rate >= 0.2 or roi >= 1.0):
+            strong_pops.append(pop)
+
+    strategy_rankings = []
+    for (bet_type, bet_method), stats in strategy_stats.items():
+        hit_rate = stats["hits"] / stats["total"] if stats["total"] else 0
+        roi = stats["refund"] / stats["amount"] if stats["amount"] else 0
+        sample = stats["total"]
+        score = (roi * 0.65 + hit_rate * 1.75) * math.log(sample + 1.0)
+        strategy_rankings.append({
+            "bet_type": bet_type,
+            "bet_method": bet_method,
+            "sample_size": sample,
+            "hit_rate": round(hit_rate, 4),
+            "roi": round(roi, 4),
+            "score": round(score, 4),
+        })
+    strategy_rankings.sort(key=lambda item: (item["score"], item["sample_size"]), reverse=True)
+
+    axis_rankings = []
+    for axis_count, stats in axis_stats.items():
+        hit_rate = stats["hits"] / stats["total"] if stats["total"] else 0
+        roi = stats["refund"] / stats["amount"] if stats["amount"] else 0
+        score = (roi * 0.55 + hit_rate * 1.5) * math.log(stats["total"] + 1.0)
+        axis_rankings.append({
+            "axis_count": axis_count,
+            "sample_size": stats["total"],
+            "hit_rate": round(hit_rate, 4),
+            "roi": round(roi, 4),
+            "score": round(score, 4),
+        })
+    axis_rankings.sort(key=lambda item: (item["score"], item["sample_size"]), reverse=True)
+
+    avg_points = round(sum(preferred_point_sizes) / len(preferred_point_sizes), 2) if preferred_point_sizes else 0
+
+    return {
+        "strong_pops": sorted(strong_pops),
+        "pop_weights": pop_weights,
+        "pop_band_stats": pop_band_stats,
+        "strategy_rankings": strategy_rankings[:8],
+        "preferred_strategies": strategy_rankings[:3],
+        "axis_rankings": axis_rankings,
+        "preferred_axis_count": axis_rankings[0]["axis_count"] if axis_rankings else 1,
+        "average_points": avg_points,
+        "total_records": len(rows),
+    }
+
+
+@app.get("/api/user_profile")
+def get_user_profile():
+    """過去の履歴からユーザーの得意な人気帯、券種、買い方を分析する"""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT jiku_horses, jiku_pops, is_hit, bet_type, bet_method, points, amount, refund
+            FROM bet_history
+        """)
+        rows = cursor.fetchall()
+        conn.close()
+        if not rows:
+            return {"success": True, "profile": None}
+        return {"success": True, "profile": build_user_profile(rows)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/status")
+def get_status():
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM bet_history")
+        history_count = cursor.fetchone()[0]
+        conn.close()
+        profile_res = get_user_profile()
+        return {
+            "success": True,
+            "history_count": history_count,
+            "profile_loaded": bool(profile_res.get("profile")) if profile_res.get("success") else False,
+            "profile": profile_res.get("profile") if profile_res.get("success") else None,
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 @app.post("/api/import_csv")
 def import_csv_data(data: list[BetHistoryItem]):
@@ -264,13 +424,13 @@ def import_csv_data(data: list[BetHistoryItem]):
         cursor = conn.cursor()
         for bet in data:
             cursor.execute('''
-            INSERT INTO bet_history (
-                race_id, race_name, bet_type, bet_method, points, amount,
+            INSERT OR IGNORE INTO bet_history (
+                race_id, race_date, venue, distance, race_name, bet_type, bet_method, points, amount,
                 jiku_horses, aite_horses, jiku_names, aite_names,
                 jiku_pops, aite_pops, jiku_odds, aite_odds, is_hit, refund
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                bet.race_id, bet.race_name, bet.bet_type, bet.bet_method, bet.points, bet.amount,
+                bet.race_id, bet.race_date, bet.venue, bet.distance, bet.race_name, bet.bet_type, bet.bet_method, bet.points, bet.amount,
                 bet.jiku_horses, bet.aite_horses, bet.jiku_names, bet.aite_names,
                 bet.jiku_pops, bet.aite_pops, bet.jiku_odds, bet.aite_odds, bet.is_hit, bet.refund
             ))
@@ -286,15 +446,15 @@ def save_bet(bet: BetHistoryItem):
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
         cursor.execute('''
-        INSERT INTO bet_history (
-            race_id, race_name, bet_type, bet_method, points, amount,
+        INSERT OR IGNORE INTO bet_history (
+            race_id, race_date, venue, distance, race_name, bet_type, bet_method, points, amount,
             jiku_horses, aite_horses, jiku_names, aite_names,
-            jiku_pops, aite_pops, jiku_odds, aite_odds
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            jiku_pops, aite_pops, jiku_odds, aite_odds, is_hit, refund
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            bet.race_id, bet.race_name, bet.bet_type, bet.bet_method, bet.points, bet.amount,
+            bet.race_id, bet.race_date, bet.venue, bet.distance, bet.race_name, bet.bet_type, bet.bet_method, bet.points, bet.amount,
             bet.jiku_horses, bet.aite_horses, bet.jiku_names, bet.aite_names,
-            bet.jiku_pops, bet.aite_pops, bet.jiku_odds, bet.aite_odds
+            bet.jiku_pops, bet.aite_pops, bet.jiku_odds, bet.aite_odds, bet.is_hit, bet.refund
         ))
         conn.commit()
         conn.close()

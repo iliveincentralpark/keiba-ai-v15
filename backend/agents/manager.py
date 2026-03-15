@@ -17,7 +17,7 @@ class AgentManager:
         condition = self.strategy_agent.analyze_race_condition(scored)
         
         # 3. ストラテジーエージェントによる具体的買い目構築
-        bets = self.strategy_agent.build_strategic_bets(scored, condition, budget)
+        bets = self.strategy_agent.build_strategic_bets(scored, condition, budget, user_profile)
         
         return {
             "scored": scored,

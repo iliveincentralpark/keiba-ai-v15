@@ -6,13 +6,55 @@
 let currentRows = [];
 
 function parseCSV(text) {
-    const lines = text.trim().split(/\r?\n/);
-    if (lines.length < 2) return [];
-    const headers = lines[0].split(',').map(h => h.trim());
-    return lines.slice(1).map(line => {
-        const vals = line.split(',');
+    const rows = [];
+    let current = [];
+    let cell = '';
+    let inQuotes = false;
+
+    for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i];
+        const next = text[i + 1];
+
+        if (ch === '"') {
+            if (inQuotes && next === '"') {
+                cell += '"';
+                i += 1;
+            } else {
+                inQuotes = !inQuotes;
+            }
+            continue;
+        }
+
+        if (ch === ',' && !inQuotes) {
+            current.push(cell.trim());
+            cell = '';
+            continue;
+        }
+
+        if ((ch === '\n' || ch === '\r') && !inQuotes) {
+            if (ch === '\r' && next === '\n') i += 1;
+            current.push(cell.trim());
+            if (current.some(value => value !== '')) rows.push(current);
+            current = [];
+            cell = '';
+            continue;
+        }
+
+        cell += ch;
+    }
+
+    if (cell || current.length) {
+        current.push(cell.trim());
+        if (current.some(value => value !== '')) rows.push(current);
+    }
+
+    if (rows.length < 2) return [];
+    const headers = rows[0];
+    return rows.slice(1).map(values => {
         const obj = {};
-        headers.forEach((h, i) => { obj[h] = (vals[i] || '').trim(); });
+        headers.forEach((header, index) => {
+            obj[header] = (values[index] || '').trim();
+        });
         return obj;
     });
 }
@@ -25,26 +67,31 @@ async function importToAI() {
 
     const btn = document.getElementById('import-ai-btn');
     btn.disabled = true;
-    const originalText = btn.textContent;
     btn.textContent = '思考回路に書き込み中... 🧠';
 
     // CSVのカラム名を現在のAPIの期待する形式にマッピング
-    const payload = currentRows.map(r => {
-        // 人気データが取れない場合は適当な値を入れる (学習精度のため)
-        const popValue = r['人気'] || "0";
+    const payload = currentRows.map((r, index) => {
+        const points = parseInt(r['点数'] || 0, 10) || 1;
         return {
-            race_id: "csv_import_" + Date.now().toString().slice(-6),
+            race_id: r['race_id'] || `csv_import_${Date.now()}_${index}`,
+            race_date: r['開催日'] || '',
+            venue: r['競馬場'] || '',
+            distance: r['距離'] || '',
             race_name: r['レース名'] || 'CSVインポート履歴',
             bet_type: r['券種'] || '不明',
             bet_method: r['買い方'] || '不明',
-            points: 1,
-            amount: parseInt(r['購入額'] || 0),
-            refund: parseInt(r['払戻'] || 0),
-            is_hit: (parseInt(r['的中'] || 0) === 1 || parseInt(r['払戻'] || 0) > 0) ? 1 : 0,
-            jiku_pops: popValue.toString(),
-            jiku_names: r['馬名'] || "",
-            // 他のフィールドは空文字で補完
-            aite_horses: "", aite_names: "", aite_pops: "", aite_odds: "", jiku_horses: "", jiku_odds: ""
+            points,
+            amount: parseInt(r['購入額'] || 0, 10) || 0,
+            refund: parseInt(r['払戻'] || 0, 10) || 0,
+            is_hit: (parseInt(r['的中'] || 0, 10) === 1 || parseInt(r['払戻'] || 0, 10) > 0) ? 1 : 0,
+            jiku_horses: r['軸馬番'] || '',
+            aite_horses: r['相手馬番'] || '',
+            jiku_names: r['軸馬名'] || r['馬名'] || '',
+            aite_names: r['相手馬名'] || '',
+            jiku_pops: r['軸人気'] || r['人気'] || '',
+            aite_pops: r['相手人気'] || '',
+            jiku_odds: r['軸オッズ'] || '',
+            aite_odds: r['相手オッズ'] || ''
         };
     });
 
@@ -56,7 +103,7 @@ async function importToAI() {
         });
         const result = await res.json();
         if (result.success) {
-            alert(`✅ 学習完了！ ${result.count}件のデータをAIが記憶しました。解析画面に戻ると、あなたの得意な「人気帯」が評価に加算されるようになります。`);
+            alert(`✅ 学習完了！ ${result.count}件のデータをAIが記憶しました。解析画面に戻ると、人気帯・券種・買い方の傾向が予想に反映されます。`);
             btn.textContent = '学習完了 ✅';
             btn.style.background = '#3fb950';
         } else {
@@ -102,7 +149,7 @@ function processData(rows) {
         btnContainer.appendChild(btn);
 
         const info = document.createElement('p');
-        info.innerHTML = "※このボタンを押すと、AIが過去の人気帯別の的中傾向を分析し、次回の予想に反映させます。";
+        info.innerHTML = "※このボタンを押すと、AIが過去の人気帯・券種・買い方の傾向を分析し、次回の予想に反映させます。";
         info.style = "font-size:0.7rem; color:#8b949e; margin-top:10px;";
         btnContainer.appendChild(info);
 

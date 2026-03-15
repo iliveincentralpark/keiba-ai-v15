@@ -12,6 +12,36 @@ let currentData = null;
 const fmt = (v) => `¥${Number(v || 0).toLocaleString()}`;
 function safeEl(id) { return document.getElementById(id); }
 
+function formatProfileSummary(profile) {
+    if (!profile) {
+        return '履歴データ未読込。simulation画面からCSVを追加できます。';
+    }
+    const strategies = (profile.preferred_strategies || [])
+        .map(item => `${item.bet_type} ${item.bet_method}`)
+        .join(' / ');
+    const pops = (profile.strong_pops || []).length > 0
+        ? `${profile.strong_pops.join(',')}人気`
+        : '人気帯は学習中';
+    return `履歴 ${profile.total_records}件学習済み | 得意型: ${strategies || '集計中'} | 軸人気傾向: ${pops}`;
+}
+
+async function loadProfileStatus() {
+    const el = safeEl('profile-status');
+    if (!el) return;
+    el.textContent = '履歴データを確認中...';
+    try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+        if (data.success) {
+            el.textContent = formatProfileSummary(data.profile);
+        } else {
+            el.textContent = '履歴データの確認に失敗しました。';
+        }
+    } catch (e) {
+        el.textContent = '履歴データの確認に失敗しました。';
+    }
+}
+
 function showError(msg) {
     const c = safeEl('bet-cards-container');
     if (c) c.innerHTML = `<div style="padding:2rem;color:#f85149;text-align:center;border:1px solid #f85149;border-radius:12px;">⚠️ ${msg}</div>`;
@@ -179,6 +209,7 @@ async function fetchAnalysis() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    loadProfileStatus();
     safeEl('fetch-odds-btn')?.addEventListener('click', fetchAnalysis);
     safeEl('user-budget')?.addEventListener('change', fetchAnalysis); // 予算変更で再計算(バックエンド呼び出し)
 });

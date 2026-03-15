@@ -111,6 +111,123 @@ def fetch_odds_api(numeric_race_id):
     return result
 
 
+def normalize_cell_text(cell):
+    return cell.get_text(" ", strip=True).replace("\xa0", " ").strip()
+
+
+def build_header_map(table):
+    header_row = table.select_one("tr")
+    if not header_row:
+        return {}
+    headers = [normalize_cell_text(cell) for cell in header_row.find_all(["th", "td"])]
+    return {header: idx for idx, header in enumerate(headers) if header}
+
+
+def safe_cell(cells, idx):
+    if idx is None or idx < 0 or idx >= len(cells):
+        return ""
+    return normalize_cell_text(cells[idx])
+
+
+def extract_horse_anchor(row):
+    for anchor in row.select('a[href*="/horse/"]'):
+        text = anchor.get_text(strip=True)
+        if text:
+            return text
+    return ""
+
+
+def find_umaban(cells, header_map):
+    candidate_indexes = []
+    for header in ("馬番", "馬 番"):
+        if header in header_map:
+            candidate_indexes.append(header_map[header])
+
+    for idx in candidate_indexes + list(range(min(4, len(cells)))):
+        text = safe_cell(cells, idx)
+        if text.isdigit():
+            num = int(text)
+            if 1 <= num <= 18:
+                return num
+    return None
+
+
+def find_popularity(cells, header_map):
+    candidate_indexes = []
+    for header in ("人気", "人 気"):
+        if header in header_map:
+            candidate_indexes.append(header_map[header])
+
+    for idx in candidate_indexes:
+        text = safe_cell(cells, idx).replace("人気", "").strip()
+        m = re.search(r"\d+", text)
+        if m:
+            num = int(m.group())
+            if 1 <= num <= 18:
+                return num
+
+    for idx in range(len(cells) - 1, -1, -1):
+        text = safe_cell(cells, idx)
+        if text.isdigit():
+            num = int(text)
+            if 1 <= num <= 18:
+                return num
+    return 99
+
+
+def find_odds(cells, header_map):
+    candidate_indexes = []
+    for header in ("単勝", "オッズ", "単 勝"):
+        if header in header_map:
+            candidate_indexes.append(header_map[header])
+
+    decimal_pattern = re.compile(r"\d+\.\d+")
+    for idx in candidate_indexes:
+        text = safe_cell(cells, idx).replace(",", "")
+        m = decimal_pattern.search(text)
+        if m:
+            value = float(m.group())
+            if value < 1000:
+                return value
+
+    for idx in range(len(cells) - 1, -1, -1):
+        text = safe_cell(cells, idx).replace(",", "")
+        m = decimal_pattern.search(text)
+        if m:
+            value = float(m.group())
+            if value < 1000:
+                return value
+    return 999.9
+
+
+def parse_db_race_table(table):
+    header_map = build_header_map(table)
+    horses = {}
+
+    for row in table.select("tr"):
+        if row.find("th"):
+            continue
+        cells = row.find_all("td")
+        if len(cells) < 4:
+            continue
+
+        num = find_umaban(cells, header_map)
+        name = extract_horse_anchor(row)
+        if not name and "馬名" in header_map:
+            name = safe_cell(cells, header_map["馬名"])
+
+        if num is None or not name:
+            continue
+
+        horses[num] = {
+            "name": name,
+            "odds": find_odds(cells, header_map),
+            "popularity": find_popularity(cells, header_map),
+        }
+
+    return horses
+
+
 def parse_horses(html, numeric_race_id):
     """HTMLから馬一覧パース（shutuba / db.netkeiba 両対応）。(horses_dict, race_name) を返す。"""
     soup = BeautifulSoup(html, 'html.parser')
@@ -138,43 +255,47 @@ def parse_horses(html, numeric_race_id):
             if not name_elem: continue
             name = name_elem.get_text(strip=True)
             num = None
-            row_id = row.get('id', '')
-            m = re.search(r'tr_(\d+)', row_id)
-            if m:
-                num = int(m.group(1))
+            td = row.select_one('.Umaban') or row.select_one('td[class*="Umaban"]')
+            if td and td.get_text(strip=True).isdigit():
+                num = int(td.get_text(strip=True))
             else:
-                td = row.select_one('td[class*="Umaban"]')
-                if td and td.get_text(strip=True).isdigit():
-                    num = int(td.get_text(strip=True))
+                row_id = row.get('id', '')
+                m = re.search(r'tr_(\d+)', row_id)
+                if m:
+                    maybe_num = int(m.group(1))
+                    if 1 <= maybe_num <= 18:
+                        num = maybe_num
             if num is None: continue
-            od  = dynamic_odds.get(num, {}).get("odds", 999.9)
-            pop = dynamic_odds.get(num, {}).get("popularity", 99)
+
+            pop = dynamic_odds.get(num, {}).get("popularity")
+            if pop is None:
+                pop_td = row.select_one('td.Popular, td.Popular_Ninki, td[class*="Popular"]')
+                if pop_td:
+                    pop_match = re.search(r'(\d+)', pop_td.get_text(strip=True))
+                    if pop_match:
+                        pop = int(pop_match.group(1))
+            if pop is None:
+                pop = 99
+
+            od = dynamic_odds.get(num, {}).get("odds")
+            if od is None:
+                odds_td = row.select_one('td.Odds, td[class*="Odds"], td[class*="Popular"]')
+                if odds_td:
+                    odds_match = re.search(r'(\d+\.\d+)', odds_td.get_text(strip=True).replace(',', ''))
+                    if odds_match:
+                        od = float(odds_match.group(1))
+            if od is None:
+                od = 999.9
+
             horses[num] = {"name": name, "odds": od, "popularity": pop}
         return horses, race_name
 
     # --- db.netkeiba.com パターン（過去結果） ---
-    for selector in ['table.race_table_01 tr', 'table.race_table_old tr', '.RaceTable tr']:
-        rows = soup.select(selector)
-        if rows: break
-    for row in rows:
-        tds = row.find_all('td')
-        if len(tds) < 5: continue
-        try:
-            num_text  = tds[1].get_text(strip=True)
-            name_text = tds[3].get_text(strip=True)
-            pop_text  = tds[5].get_text(strip=True) if len(tds) > 5 else "99"
-            odds_text = ""
-            for td in tds:
-                t = td.get_text(strip=True).replace(',', '')
-                if re.match(r'^\d+\.\d+$', t) and float(t) < 500:
-                    odds_text = t
-                    break
-            if not num_text.isdigit(): continue
-            num = int(num_text)
-            od  = float(odds_text) if odds_text else 999.9
-            pop = int(re.search(r'\d+', pop_text).group()) if re.search(r'\d+', pop_text) else 99
-            horses[num] = {"name": name_text, "odds": od, "popularity": pop}
-        except: continue
+    for selector in ['table.race_table_01', 'table.race_table_old', '.RaceTable']:
+        for table in soup.select(selector):
+            horses = parse_db_race_table(table)
+            if horses:
+                return horses, race_name
     return horses, race_name
 
 
