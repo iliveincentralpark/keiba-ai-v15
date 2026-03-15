@@ -125,24 +125,37 @@ def parse_horses(html: str, race_id: str):
                 row_id = row.get('id', '')
                 id_match = re.search(r'tr_(\d+)', row_id)
                 if id_match:
-                    num = int(id_match.group(1))
+                    maybe_num = int(id_match.group(1))
+                    if 1 <= maybe_num <= 18:
+                        num = maybe_num
             
             # 3. それでも取れない場合はリストの順序を暫定番号とする
             if num is None:
                 num = idx
-            name_elem = row.select_one('.HorseName a') or row.select_one('.HorseName')
+
+            name_elem = (
+                row.select_one('.HorseName a')
+                or row.select_one('.HorseName')
+                or row.select_one('a[href*="/horse/"]')
+            )
             name = name_elem.get_text(strip=True) if name_elem else f"馬#{num}"
+
             pop = None
-            pop_td = row.select_one('.Popular')
+            pop_td = row.select_one('.Popular, .Popular_Ninki, td[class*="Popular"]')
             if pop_td:
                 p_text = pop_td.get_text(strip=True)
-                if p_text.isdigit(): pop = int(p_text)
+                p_match = re.search(r'(\d+)', p_text)
+                if p_match:
+                    pop = int(p_match.group(1))
+
             od = None
-            odds_td = row.select_one('.Odds')
+            odds_td = row.select_one('.Odds, td[class*="Odds"], td[class*="Popular"]')
             if odds_td:
                 o_text = odds_td.get_text(strip=True).replace(',', '')
-                try: od = float(o_text)
-                except: pass
+                o_match = re.search(r'(\d+\.\d+)', o_text)
+                if o_match:
+                    od = float(o_match.group(1))
+
             a_item = api_data.get(num, {})
             if pop is None: pop = a_item.get("popularity", 99)
             if od is None: od = a_item.get("odds", 999.9)
