@@ -11,6 +11,7 @@ from pathlib import Path
 import uvicorn
 import time
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     from .agents.manager import AgentManager
     from .database import init_db
@@ -65,6 +66,83 @@ def fetch_odds_api(race_id: str):
     except Exception as e:
         print(f"API Error: {e}")
     return result
+
+
+def fetch_all_horse_stats_from_shutuba(race_id: str) -> dict:
+    """
+    shutuba_past.htmlから全馬の近5走成績を一括取得 (V16改)
+    戻り値: {horse_num(int): {"positions": [...], "agari": [...]}}
+    """
+    try:
+        url = f"https://race.netkeiba.com/race/shutuba_past.html?race_id={race_id}"
+        res = requests.get(url, headers=HEADERS, timeout=12)
+        res.encoding = 'EUC-JP'
+        if res.status_code != 200:
+            print(f"[shutuba_past] status={res.status_code}")
+            return {}
+
+        soup = BeautifulSoup(res.text, 'html.parser')
+        rows = soup.select('tr.HorseList')
+        result = {}
+
+        for row in rows:
+            # 馬番取得
+            umaban_td = row.select_one('.Umaban') or row.select_one('td[class*="Waku"]')
+            num = None
+            if umaban_td:
+                t = umaban_td.get_text(strip=True)
+                if t.isdigit():
+                    num = int(t)
+            # ID属性からも試みる
+            if num is None:
+                row_id = row.get('id', '')
+                m = re.search(r'tr_(\d+)', row_id)
+                if m:
+                    maybe = int(m.group(1))
+                    if 1 <= maybe <= 18:
+                        num = maybe
+            if num is None:
+                continue
+
+            # Past列から近走着順・上がり3Fを抽出
+            past_tds = [td for td in row.find_all('td') if 'Past' in ' '.join(td.get('class', []))]
+            positions = []
+            agari_times = []
+
+            for ptd in past_tds:
+                cls = ' '.join(ptd.get('class', []))
+                # Ranking_Nクラスから着順を取得 (Ranking_1=1着, Ranking_2=2着...)
+                rank_m = re.search(r'Ranking_(\d+)', cls)
+                if rank_m:
+                    positions.append(int(rank_m.group(1)))
+                else:
+                    # classに着順なし = 掲示なしまたは除外等
+                    # rawtextからも従来の着順を抽出試み
+                    raw = ptd.get_text(strip=True)
+                    # パターン: 「16頤14番」などから「14番」を抽出し、それが着順でない場合は無視
+                    # 主に「X番」と「X人」が出てくるので 透過等
+                    pass  # Ranking_Nがない場合は着順不明（除外・取消等）
+
+                # 上がり3Fを抽出: rawtextの末尾厄に (33.x) 形式
+                raw = ptd.get_text(strip=True)
+                agari_m = re.search(r'\((3\d\.\d)\)', raw)  # (33.5) (34.2)など
+                if agari_m:
+                    try:
+                        agari_val = float(agari_m.group(1))
+                        if 30.0 <= agari_val <= 45.0:
+                            agari_times.append(agari_val)
+                    except ValueError:
+                        pass
+
+            if positions or agari_times:
+                result[num] = {"positions": positions, "agari": agari_times}
+
+        fetched = sum(1 for v in result.values() if v and v.get("positions"))
+        print(f"[shutuba_past] {len(rows)}頭中 {fetched}頭の近走成績取得")
+        return result
+    except Exception as e:
+        print(f"[shutuba_past] error: {e}")
+        return {}
 
 def fetch_time_index(race_id: str):
     """タイム指数(馬の能力)を取得 (V8)"""
@@ -167,7 +245,17 @@ def parse_horses(html: str, race_id: str):
             ability = time_data.get(num, {"max": 0, "avg": 0, "last": 0})
             if num in horses:
                 continue
-            horses[num] = {"name": name, "odds": od, "popularity": pop, "ability": ability}
+
+            # V16: horse_id を抽出（近走成績取得に使用）
+            horse_id = None
+            link_elem = row.select_one('.HorseName a') or row.select_one('a[href*="/horse/"]')
+            if link_elem:
+                href = link_elem.get('href', '')
+                m = re.search(r'/horse/(\d+)', href)
+                if m:
+                    horse_id = m.group(1)
+
+            horses[num] = {"name": name, "odds": od, "popularity": pop, "ability": ability, "_horse_id": horse_id}
         return horses, race_name
 
     # 2. 過去データ (db.netkeiba.com)
@@ -189,12 +277,8 @@ def parse_horses(html: str, race_id: str):
         
     return horses, race_name
 
-@app.get("/api/scrape")
-def scrape_race(race_id: str):
-    race_id = race_id.strip()
-    if not re.fullmatch(r'\d{12}', race_id):
-        raise HTTPException(status_code=400, detail="Invalid ID")
-    
+def _raw_scrape(race_id: str) -> dict:
+    """内部用スクレイプ。_horse_idを含む生データを返す"""
     urls = [
         f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}",
         f"https://db.netkeiba.com/race/{race_id}/"
@@ -203,37 +287,71 @@ def scrape_race(race_id: str):
         try:
             res = requests.get(url, headers=HEADERS, timeout=10)
             res.encoding = 'EUC-JP'
-            if res.status_code != 200: continue
+            if res.status_code != 200:
+                continue
             horses, r_name = parse_horses(res.text, race_id)
             if horses:
                 return {"success": True, "race_id": race_id, "race_name": r_name, "horses": horses}
-        except: continue
-        
-    raise HTTPException(status_code=404, detail="Data not found")
+        except:
+            continue
+    return {"success": False}
+
+
+@app.get("/api/scrape")
+def scrape_race(race_id: str):
+    race_id = race_id.strip()
+    if not re.fullmatch(r'\d{12}', race_id):
+        raise HTTPException(status_code=400, detail="Invalid ID")
+
+    result = _raw_scrape(race_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=404, detail="Data not found")
+
+    # _horse_id など内部フィールドを除外して返す
+    clean_horses = {
+        num: {k: v for k, v in data.items() if not k.startswith('_')}
+        for num, data in result["horses"].items()
+    }
+    return {**result, "horses": clean_horses}
 
 @app.get("/api/predict")
 def predict_race(race_id: str, budget: int = 10000):
-    """Agent Managerを使用してレースを予測する (V15)"""
-    # 1. スクレイピング
-    res = scrape_race(race_id)
+    """Agent Managerを使用してレースを予測する (V16: 近走成績取得追加)"""
+    race_id = race_id.strip()
+    if not re.fullmatch(r'\d{12}', race_id):
+        raise HTTPException(status_code=400, detail="Invalid ID")
+
+    # 1. スクレイピング（_horse_idを含む生データ）
+    res = _raw_scrape(race_id)
     if not res.get("success"):
         raise HTTPException(status_code=404, detail="Scrape failed")
-    
-    horses_list = [
-        {"number": num, **data} 
-        for num, data in res["horses"].items()
-    ]
-    
-    # +++ User Profile Fetch (DNA) +++
+
+    raw_horses = res["horses"]
+
+    # 2. 近走成績をshutuba_past.htmlから一括取得 (V16) - 1回のreqで全馬分
+    print(f"[predict] Fetching shutuba_past for {race_id}...")
+    recent_stats_map = fetch_all_horse_stats_from_shutuba(race_id)
+    fetched = sum(1 for v in recent_stats_map.values() if v)
+    print(f"[predict] recent_stats fetched: {fetched}/{len(raw_horses)} horses")
+
+    # 3. horses_list に recent_stats を追加
+    horses_list = []
+    for num_str, data in raw_horses.items():
+        num = int(num_str)
+        h = {"number": num, **{k: v for k, v in data.items() if not k.startswith('_')}}
+        h["recent_stats"] = recent_stats_map.get(num)  # None の場合はデフォルト評価にフォールバック
+        horses_list.append(h)
+
+    # 4. User Profile Fetch (DNA)
     try:
         profile_res = get_user_profile()
         user_profile = profile_res.get("profile") if profile_res.get("success") else None
     except Exception:
         user_profile = None
 
-    # 2. Agent Managerによる予測
+    # 5. Agent Managerによる予測
     predictions = agent_manager.get_predictions(horses_list, budget, user_profile)
-    
+
     return {
         "success": True,
         "race_id": race_id,

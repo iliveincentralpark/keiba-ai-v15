@@ -224,7 +224,12 @@ function renderApp(data) {
                             </td>
                             <td style="padding:9px 6px; text-align:center; color:#8b949e;">${h.popularity}/${h.odds}</td>
                             <td style="padding:9px 6px; text-align:center; color:${h.value > 1.2 ? '#3fb950' : h.value < 0.8 ? '#f85149' : '#fff'};">${h.value.toFixed(2)}</td>
-                            <td style="padding:9px 6px; text-align:center; color:${h.ability_score > 1.0 ? '#58a6ff' : '#fff'};">${h.ability_score.toFixed(2)}</td>
+                            <td style="padding:9px 6px; text-align:center; color:${h.ability_score > 1.0 ? '#58a6ff' : '#fff'};">
+                                ${h.ability_score.toFixed(2)}
+                                <span style="font-size:0.58rem; color:#666; display:block;">
+                                    ${h.ability_source === 'recent' ? '📊近走' : h.ability_source === 'time_index' ? '📈指数' : '❓不明'}
+                                </span>
+                            </td>
                             <td style="padding:9px 6px; text-align:center;">${h.jiku_bonus > 1.0 || h.db_bonus > 1.0 ? '🔥' : '-'}</td>
                             <td style="padding:9px 6px; text-align:center;">${(h.upset_score || 0) > 0.5 ? '🎲' : '-'}</td>
                             <td style="padding:9px 6px; text-align:center; font-weight:900; color:${i === 0 ? '#d4af37' : '#fff'};">${h.score.toFixed(1)}</td>
