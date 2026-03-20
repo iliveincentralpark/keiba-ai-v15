@@ -1,5 +1,5 @@
-// AI Keiba PWA Service Worker (V15)
-const CACHE_NAME = 'keiba-ai-v15-cache';
+// AI Keiba PWA Service Worker (V16)
+const CACHE_NAME = 'keiba-ai-v16-cache';
 const ASSETS = [
     './',
     './index.html',
