@@ -44,24 +44,80 @@ function scoreBar(label, value, maxVal, color) {
         </div>`;
 }
 
-/** ── 馬評価の理由文を生成 ── */
+/** ── 馬評価の理由文を生成（自然な日本語） ── */
 function buildReason(h, role) {
     const parts = [];
+
     if (role === 'honmei') {
-        parts.push(`総合スコアが最上位（${h.score.toFixed(1)}）。`);
-        if (h.value > 1.1) parts.push(`妙味スコアも高く（${h.value.toFixed(2)}）、オッズに対して期待値がある。`);
-        if (h.ability_score > 1.0) parts.push(`실력指数が高水準（${h.ability_score.toFixed(2)}）。`);
-        if (h.ability_source === 'recent') parts.push(`近走成績から実力を評価。`);
+        // 本命理由：総合スコア + 各軸の強みを説明
+        parts.push(`全馬中で最も高い総合スコア（${h.score.toFixed(1)}点）を獲得。`);
+
+        if (h.value > 1.3) {
+            parts.push(`オッズが期待値より高く、妙味スコア ${h.value.toFixed(2)} と回収面でも優位。`);
+        } else if (h.value > 1.0) {
+            parts.push(`オッズはほぼ適性水準で、過評価されていない。`);
+        } else {
+            parts.push(`オッズは低め（人気馬）だが、安定性で総合トップに。`);
+        }
+
+        if (h.ability_source === 'recent' && h.ability_score > 0.95) {
+            parts.push(`近走成績から実力を確認済み（実力スコア ${h.ability_score.toFixed(2)}）。`);
+        } else if (h.ability_source === 'time_index' && h.ability_score > 0.95) {
+            parts.push(`タイム指数も高水準（${h.ability_score.toFixed(2)}）で裏付けあり。`);
+        } else if (h.ability_score <= 0.8) {
+            parts.push(`実力データは限られるが、妙味と安定性で補っている。`);
+        }
+
+        if (h.jiku_bonus > 1.0 || h.db_bonus > 1.0) {
+            parts.push(`過去の的中履歴と軸人気帯が一致（🔥DNAボーナス）。`);
+        }
+
     } else if (role === 'taikou') {
-        parts.push(`総合スコア上位（${h.score.toFixed(1)}）の対抗馬。`);
-        if (h.value > 1.0) parts.push(`妙味あり（value: ${h.value.toFixed(2)}）。`);
-        if (h.ability_source === 'recent') parts.push(`近走成績反映済み。`);
+        // 対抗理由：本命に次ぐ根拠を説明
+        parts.push(`総合スコア ${h.score.toFixed(1)} 点で本命に次ぐ評価。`);
+
+        if (h.value > 1.1) {
+            parts.push(`妙味スコア ${h.value.toFixed(2)} と、オッズに対して期待値が上乗せされている。`);
+        }
+
+        if (h.ability_source === 'recent') {
+            if (h.ability_score > 1.0) {
+                parts.push(`近走成績が良好で実力スコアが高水準（${h.ability_score.toFixed(2)}）。`);
+            } else {
+                parts.push(`近走成績を反映して評価（実力スコア ${h.ability_score.toFixed(2)}）。`);
+            }
+        } else if (h.ability_source === 'time_index') {
+            parts.push(`タイム指数ベースで実力を評価（スコア ${h.ability_score.toFixed(2)}）。`);
+        }
+
+        if (h.jiku_bonus > 1.0 || h.db_bonus > 1.0) {
+            parts.push(`過去履歴と軸戦略がマッチ（🔥DNA一致）。`);
+        }
+
+        parts.push(`本命との組み合わせ馬として注目。`);
+
     } else {
-        parts.push(`人気${h.popularity}番人気・${h.odds}倍ながら实力指数が高い穴馬候補。`);
-        if (h.upset_score > 0) parts.push(`穴スコア ${h.upset_score.toFixed(2)}（妙味×人気薄の相乗効果）。`);
-        if (h.ability_source === 'recent') parts.push(`近走成績から実力を確認。`);
+        // 穴馬理由：なぜ低人気なのに選ばれたかを説明
+        parts.push(`${h.popularity}番人気（単勝 ${h.odds}倍）と市場では低評価だが、AIスコアが高い穴馬候補。`);
+
+        if (h.ability_source === 'recent' && h.ability_score > 0.85) {
+            parts.push(`近走の着順・上がりタイムから実力が裏付けられている（実力スコア ${h.ability_score.toFixed(2)}）。`);
+        } else if (h.ability_source === 'time_index' && h.ability_score > 0.85) {
+            parts.push(`タイム指数から実力が確認できる（スコア ${h.ability_score.toFixed(2)}）。`);
+        }
+
+        if (h.value > 1.0) {
+            parts.push(`オッズが期待値を上回っており（妙味 ${h.value.toFixed(2)}）、馬券的な妙味が大きい。`);
+        }
+
+        if (h.upset_score > 1.5) {
+            parts.push(`穴馬スコア ${h.upset_score.toFixed(2)} と、人気薄×実力の組み合わせが特に際立つ。`);
+        } else if (h.upset_score > 0.5) {
+            parts.push(`穴馬スコア ${h.upset_score.toFixed(2)}。一発逆転の可能性がある。`);
+        }
     }
-    return parts.join(' ') || 'AIが総合的に評価。';
+
+    return parts.join(' ') || 'AIが総合的に高評価。';
 }
 
 /** ── 馬カード1枚のHTML ── */
