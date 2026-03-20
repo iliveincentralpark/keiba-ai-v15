@@ -1,305 +1,244 @@
 /**
- * app_v15.js
- * AI買い目ジェネレーター (V16: 本命/対抗/穴馬パネル + 4券種 + おすすめ順)
+ * app_v15.js (V16 — 馬評価特化モード)
+ * 買い目生成を廃止し、本命・対抗・穴馬の表示に特化
  */
 
 let currentData = null;
-
-const fmt = (v) => `¥${Number(v || 0).toLocaleString()}`;
 function safeEl(id) { return document.getElementById(id); }
 
+/** ── プロフィールステータス ── */
 function formatProfileSummary(profile) {
-    if (!profile) {
-        return '履歴データ未読込。simulation画面からCSVを追加できます。';
-    }
-    const strategies = (profile.preferred_strategies || [])
-        .map(item => `${item.bet_type} ${item.bet_method}`)
-        .join(' / ');
+    if (!profile) return '履歴データ未読込（simulation画面からCSVを追加できます）';
     const pops = (profile.strong_pops || []).length > 0
-        ? `${profile.strong_pops.join(',')}人気`
+        ? `軸人気傾向: ${profile.strong_pops.join(',')}人気`
         : '人気帯は学習中';
-    return `履歴 ${profile.total_records}件学習済み | 得意型: ${strategies || '集計中'} | 軸人気傾向: ${pops}`;
+    return `履歴 ${profile.total_records}件学習済み | ${pops}`;
 }
 
 async function loadProfileStatus() {
     const el = safeEl('profile-status');
     if (!el) return;
-    el.textContent = '履歴データを確認中...';
     try {
         const res = await fetch('/api/status');
         const data = await res.json();
-        if (data.success) {
-            el.textContent = formatProfileSummary(data.profile);
-        } else {
-            el.textContent = '履歴データの確認に失敗しました。';
-        }
-    } catch (e) {
-        el.textContent = '履歴データの確認に失敗しました。';
-    }
+        el.textContent = data.success ? formatProfileSummary(data.profile) : '';
+    } catch { el.textContent = ''; }
 }
 
+/** ── エラー表示 ── */
 function showError(msg) {
-    const c = safeEl('bet-cards-container');
-    if (c) c.innerHTML = `<div style="padding:2rem;color:#f85149;text-align:center;border:1px solid #f85149;border-radius:12px;">⚠️ ${msg}</div>`;
+    const c = safeEl('results-container');
+    if (c) c.innerHTML = `<div style="padding:2rem;color:#f85149;text-align:center;border:1px solid #f85149;border-radius:12px;margin:1rem 0;">⚠️ ${msg}</div>`;
 }
 
-/** ── ①本命・対抗・穴馬ピックアップパネル ── */
-function renderHorseRoles(horse_roles) {
-    if (!horse_roles) return '';
-
-    const { honmei, taikou, ana } = horse_roles;
-
-    const roleCard = (label, color, bgColor, emoji, horses) => {
-        if (!horses || (Array.isArray(horses) ? horses.length === 0 : !horses)) return '';
-        const list = Array.isArray(horses) ? horses : [horses];
-        const items = list.map(h =>
-            `<span style="background:${bgColor}; border:1px solid ${color}; color:#fff;
-                          border-radius:8px; padding:5px 10px; font-size:0.78rem; font-weight:700; white-space:nowrap;">
-                ${h.number}. ${h.name} <small style="opacity:0.75;">${h.popularity}人/${h.odds}倍</small>
-            </span>`
-        ).join('');
-        return `
-            <div style="display:flex; align-items:flex-start; gap:8px; margin-bottom:10px;">
-                <span style="background:${color}; color:#000; border-radius:6px; padding:3px 8px;
-                              font-size:0.72rem; font-weight:900; white-space:nowrap; flex-shrink:0;">
-                    ${emoji} ${label}
-                </span>
-                <div style="display:flex; flex-wrap:wrap; gap:5px;">${items}</div>
-            </div>`;
-    };
-
-    const anaSection = ana && ana.length > 0
-        ? roleCard('穴馬', '#ff9800', 'rgba(255,152,0,0.15)', '🎲', ana)
-        : '<div style="font-size:0.7rem;color:#555;margin-bottom:10px;">🎲 穴馬候補なし（荒れにくいレース）</div>';
-
+/** ── スコアをバー表示するHTML ── */
+function scoreBar(label, value, maxVal, color) {
+    const pct = Math.min(100, (value / maxVal) * 100).toFixed(1);
     return `
-        <div style="margin:0 1rem 1.2rem; padding:14px 16px; background:#0d1117;
-                    border:1px solid #30363d; border-radius:14px;">
-            <h3 style="font-size:0.82rem; color:#d4af37; margin:0 0 12px;
-                        border-left:3px solid #d4af37; padding-left:8px;">
-                🐎 AI馬評価ピックアップ
-            </h3>
-            ${roleCard('本命', '#d4af37', 'rgba(212,175,55,0.15)', '◎', honmei)}
-            ${roleCard('対抗', '#58a6ff', 'rgba(88,166,255,0.12)', '○', taikou)}
-            ${anaSection}
+        <div class="score-bar-row">
+            <span class="score-bar-label">${label}</span>
+            <div class="score-bar-track">
+                <div class="score-bar-fill" style="width:${pct}%; background:${color};"></div>
+            </div>
+            <span class="score-bar-val">${typeof value === 'number' ? value.toFixed(2) : value}</span>
         </div>`;
 }
 
-/** ── ②買い目カード群のレンダリング ── */
-function renderApp(data) {
-    const container = safeEl('bet-cards-container');
-    const template = safeEl('bet-card-template');
-    const raceInfo = safeEl('race-info-container');
-
-    if (!container || !template) return;
-    container.innerHTML = '';
-
-    const { scored, condition, bets, horse_roles } = data.predictions;
-    if (!scored || scored.length === 0) return;
-
-    if (raceInfo) {
-        raceInfo.innerHTML = `
-            <div style="font-size:1.2rem; font-weight:900; color:#fff;">${data.race_name}</div>
-            <div style="font-size:0.65rem; color:#ffeb3b; margin-top:2px;">
-                ${condition.isClearFavorite ? '⚡ 本命突出型' : '⚖️ 接戦型'} | 
-                ${condition.isLowOdds ? '🔒 低配当' : '💰 配当あり'} |
-                ${condition.hasUpsetCandidate ? '🎲 穴馬あり' : '🛡️ 堅め'}
-            </div>
-        `;
+/** ── 馬評価の理由文を生成 ── */
+function buildReason(h, role) {
+    const parts = [];
+    if (role === 'honmei') {
+        parts.push(`総合スコアが最上位（${h.score.toFixed(1)}）。`);
+        if (h.value > 1.1) parts.push(`妙味スコアも高く（${h.value.toFixed(2)}）、オッズに対して期待値がある。`);
+        if (h.ability_score > 1.0) parts.push(`실력指数が高水準（${h.ability_score.toFixed(2)}）。`);
+        if (h.ability_source === 'recent') parts.push(`近走成績から実力を評価。`);
+    } else if (role === 'taikou') {
+        parts.push(`総合スコア上位（${h.score.toFixed(1)}）の対抗馬。`);
+        if (h.value > 1.0) parts.push(`妙味あり（value: ${h.value.toFixed(2)}）。`);
+        if (h.ability_source === 'recent') parts.push(`近走成績反映済み。`);
+    } else {
+        parts.push(`人気${h.popularity}番人気・${h.odds}倍ながら实力指数が高い穴馬候補。`);
+        if (h.upset_score > 0) parts.push(`穴スコア ${h.upset_score.toFixed(2)}（妙味×人気薄の相乗効果）。`);
+        if (h.ability_source === 'recent') parts.push(`近走成績から実力を確認。`);
     }
+    return parts.join(' ') || 'AIが総合的に評価。';
+}
 
-    // 本命・対抗・穴馬パネルを先頭に挿入
-    const rolesHTML = renderHorseRoles(horse_roles);
-    if (rolesHTML) {
-        const rolesDiv = document.createElement('div');
-        rolesDiv.innerHTML = rolesHTML;
-        container.appendChild(rolesDiv);
-    }
-
-    // おすすめ順ラベルのスタイルマップ
-    const priorityColors = {
-        '◎推奨':  { bg: '#d4af37', color: '#000' },
-        '○安定':  { bg: '#3fb950', color: '#000' },
-        '○穴狙い':{ bg: '#ff9800', color: '#000' },
-        '○配当':  { bg: '#f05133', color: '#fff' },
-        '△妙味':  { bg: '#58a6ff', color: '#000' },
-        '△安定':  { bg: '#3fb950', color: '#000' },
-        '△押さえ':{ bg: '#8b949e', color: '#000' },
-        '△配当':  { bg: '#f05133', color: '#fff' },
-        '☆配当':  { bg: '#9c27b0', color: '#fff' },
-        '☆妙味':  { bg: '#58a6ff', color: '#000' },
-        '☆押さえ':{ bg: '#8b949e', color: '#000' },
-        '☆安定':  { bg: '#3fb950', color: '#000' },
+/** ── 馬カード1枚のHTML ── */
+function horseCard(h, role, rank) {
+    const roleMap = {
+        honmei: { label: '◎ 本命',  cls: 'honmei', emoji: '🥇' },
+        taikou: { label: `○ 対抗 #${rank}`, cls: 'taikou', emoji: '🥈' },
+        ana:    { label: '🎲 穴馬',  cls: 'ana',    emoji: '🎯' },
     };
+    const r = roleMap[role];
 
-    let grand = 0;
-    bets.forEach(bet => {
-        const clone = template.content.cloneNode(true);
-        const qs = (cls) => clone.querySelector(cls);
+    // スコアのmax値（全馬の中での最大を基準にしたいが近似値で対応）
+    const scoreMax = 30;
+    const valueMax = 2.5;
+    const abilityMax = 1.5;
 
-        // おすすめ順バッジ付きタイトル
-        const plabel = bet.priority_label || '';
-        const pStyle = priorityColors[plabel] || { bg: '#8b949e', color: '#000' };
-        const priorityBadge = plabel
-            ? `<span style="background:${pStyle.bg}; color:${pStyle.color}; font-size:0.65rem;
-                            font-weight:900; padding:2px 7px; border-radius:5px; margin-right:6px;
-                            vertical-align:middle;">${plabel}</span>`
-            : '';
+    const barColors = {
+        honmei: { score: '#d4af37', value: '#3fb950', ability: '#58a6ff', upset: '#ff9800' },
+        taikou: { score: '#58a6ff', value: '#3fb950', ability: '#58a6ff', upset: '#ff9800' },
+        ana:    { score: '#ff9800', value: '#3fb950', ability: '#58a6ff', upset: '#ff9800' },
+    };
+    const bc = barColors[role];
 
-        qs('.badge').textContent = bet.icon;
-        qs('.card-title').innerHTML = `${priorityBadge}${bet.type}（${bet.method}）`;
-        qs('.card-reasoning').innerHTML = `<p style="font-size:0.72rem; color:#ccc; margin:0; line-height:1.6;">💡 ${bet.reason}</p>`;
+    const abilitySourceBadge =
+        h.ability_source === 'recent'     ? '<span style="font-size:0.6rem;color:#58a6ff;margin-left:5px;">📊近走</span>' :
+        h.ability_source === 'time_index' ? '<span style="font-size:0.6rem;color:#8b949e;margin-left:5px;">📈指数</span>' :
+        '<span style="font-size:0.6rem;color:#555;margin-left:5px;">❓不明</span>';
 
-        let detailHTML = '';
-        if (bet.isBOX) {
-            detailHTML = `
-                <div style="font-size:0.7rem; color:#8b949e; margin-bottom:5px;">BOX選択馬</div>
-                <div style="display:flex; flex-wrap:wrap; gap:5px;">
-                    ${bet.aite.map(h => `
-                        <span class="horse-tag" style="background:#21262d; border-color:#444;">
-                            <b>${h.number}</b> ${h.name} <small>(${h.popularity}人)</small>
-                        </span>`).join('')}
-                </div>`;
-        } else {
-            detailHTML = `
-                <div style="display:flex; flex-direction:column; gap:8px;">
-                    ${bet.jiku && bet.jiku.length > 0 ? `
-                    <div style="display:flex; align-items:center; gap:8px;">
-                        <span style="width:30px; font-size:0.65rem; color:#8b949e;">${bet.jiku.length === 2 ? '2軸' : '軸'}</span>
-                        <div style="flex:1; display:flex; gap:5px; flex-wrap:wrap;">
-                            ${bet.jiku.map(h => `<div class="horse-tag honmei" style="padding:6px 12px;"><b>${h.number}</b> ${h.name} <small style="opacity:0.7;">${h.popularity}人</small></div>`).join('')}
-                        </div>
-                    </div>` : ''}
-                    <div style="display:flex; align-items:flex-start; gap:8px;">
-                        <span style="width:30px; font-size:0.65rem; color:#8b949e; margin-top:5px;">相手</span>
-                        <div style="flex:1; display:flex; flex-wrap:wrap; gap:4px;">
-                            ${bet.aite.map(h => {
-                                const isUpset = (h.upset_score || 0) > 0.5;
-                                return `<span class="horse-tag" style="background:${isUpset ? 'rgba(255,152,0,0.15)' : '#21262d'};
-                                    border-color:${isUpset ? '#ff9800' : '#444'}; font-size:0.8rem;">
-                                    <b>${h.number}</b> ${h.name}${isUpset ? ' 🎲' : ''}
-                                </span>`;
-                            }).join('')}
-                        </div>
-                    </div>
-                </div>`;
-        }
-        qs('.bet-details').innerHTML = detailHTML;
-        qs('.price-calc').textContent = `@${bet.perPoint.toLocaleString()} × ${bet.points}点`;
-        qs('.price-total').textContent = fmt(bet.total);
-        qs('.save-btn').addEventListener('click', e => saveBet(e.target, bet));
-        grand += bet.total;
-        container.appendChild(clone);
-    });
+    const dnaBadge = (h.jiku_bonus > 1.0 || h.db_bonus > 1.0)
+        ? '<span style="background:#3fb950;color:#000;font-size:0.58rem;font-weight:900;padding:2px 6px;border-radius:4px;margin-left:6px;">🔥DNA</span>'
+        : '';
 
-    const ft = safeEl('final-total');
-    if (ft) ft.textContent = fmt(grand);
-    const budget = parseInt(safeEl('user-budget')?.value) || 10000;
-    const tb = safeEl('total-budget');
-    if (tb) tb.textContent = fmt(budget);
+    return `
+        <div class="role-card ${r.cls}">
+            <div class="role-label ${r.cls}">${r.emoji} ${r.label}</div>
+            <div class="horse-main-name">${h.number}. ${h.name}${dnaBadge}</div>
+            <div class="horse-sub-info">
+                <span>👤 ${h.popularity}人気</span>
+                <span>💴 ${h.odds}倍</span>
+                ${abilitySourceBadge}
+            </div>
+            ${scoreBar('総合', h.score, scoreMax, bc.score)}
+            ${scoreBar('妙味', h.value, valueMax, bc.value)}
+            ${scoreBar('実力', h.ability_score, abilityMax, bc.ability)}
+            ${h.upset_score > 0 ? scoreBar('穴', h.upset_score, 5, bc.upset) : ''}
+            <div class="reason-box ${r.cls}">💡 ${buildReason(h, role)}</div>
+        </div>`;
+}
 
-    // スコア詳細テーブル
-    const tbl = document.createElement('div');
-    tbl.style = "margin:1.5rem 1rem; padding-bottom:6rem;";
-    tbl.innerHTML = `
-        <h3 style="font-size:0.85rem; color:#d4af37; border-left:4px solid #d4af37; padding-left:8px; margin-bottom:10px;">📊 AIスコア詳細 (V16評価)</h3>
-        <div style="border-radius:12px; overflow:hidden; background:#161b22; border:1px solid #333;">
-            <table style="width:100%;font-size:0.72rem;border-collapse:collapse;">
-                <thead style="background:#21262d;color:#8b949e;">
+/** ── メインレンダリング ── */
+function renderApp(data) {
+    const container = safeEl('results-container');
+    const raceInfo  = safeEl('race-info-container');
+    if (!container) return;
+
+    const { scored, condition, horse_roles } = data.predictions;
+    if (!scored || scored.length === 0) {
+        showError('馬データが取得できませんでした');
+        return;
+    }
+
+    // レース情報バー
+    if (raceInfo) {
+        const condTags = [
+            condition.isClearFavorite ? '⚡ 本命突出型' : '⚖️ 接戦型',
+            condition.isLowOdds       ? '🔒 低配当'    : '💰 配当あり',
+            condition.hasUpsetCandidate ? '🎲 穴馬あり' : '🛡️ 堅め',
+        ].join(' | ');
+        raceInfo.innerHTML = `
+            <div style="font-size:1.1rem;font-weight:900;color:#fff;">${data.race_name}</div>
+            <div style="font-size:0.62rem;color:#ffeb3b;margin-top:3px;">${condTags}</div>`;
+    }
+
+    let html = '';
+
+    // ─── ① 本命・対抗・穴馬カード ───
+    html += `<h2 style="font-size:0.78rem;color:#8b949e;letter-spacing:1px;margin:18px 0 12px;">▼ AI馬評価</h2>`;
+
+    const { honmei, taikou, ana } = horse_roles || {};
+
+    if (honmei) {
+        html += horseCard(honmei, 'honmei', 1);
+    }
+    if (taikou && taikou.length > 0) {
+        taikou.forEach((h, i) => { html += horseCard(h, 'taikou', i + 1); });
+    }
+    if (ana && ana.length > 0) {
+        ana.forEach(h => { html += horseCard(h, 'ana', 0); });
+    } else {
+        html += `<div style="text-align:center;color:#555;font-size:0.72rem;padding:10px 0 6px;">🛡️ 穴馬候補なし（比較的堅いレース）</div>`;
+    }
+
+    // ─── ② 全馬スコアテーブル ───
+    html += `
+        <h2 style="font-size:0.78rem;color:#8b949e;letter-spacing:1px;margin:22px 0 10px;">▼ 全馬AIスコア</h2>
+        <div style="border-radius:12px;overflow:hidden;background:#161b22;border:1px solid #333;margin-bottom:80px;">
+            <table class="score-table">
+                <thead>
                     <tr>
-                        <th style="padding:9px 10px; text-align:left;">馬名</th>
-                        <th style="padding:9px 6px;">人/倍</th>
-                        <th style="padding:9px 6px;">妙味</th>
-                        <th style="padding:9px 6px;">実力</th>
-                        <th style="padding:9px 6px;">DNA</th>
-                        <th style="padding:9px 6px;">穴</th>
-                        <th style="padding:9px 6px;">総合</th>
+                        <th style="text-align:left;padding-left:10px;">馬名</th>
+                        <th>人/倍</th>
+                        <th>妙味</th>
+                        <th>実力</th>
+                        <th>穴</th>
+                        <th>総合</th>
                     </tr>
                 </thead>
                 <tbody>
-                    ${scored.map((h, i) => `
-                        <tr style="border-bottom:1px solid #21262d; background:${i === 0 ? 'rgba(212,175,55,0.08)' : 'transparent'}">
-                            <td style="padding:9px 10px; font-weight:${i < 3 ? '900' : '400'}; color:${i === 0 ? '#d4af37' : i < 3 ? '#fff' : '#c9d1d9'};">
-                                ${h.number} ${h.name}
-                            </td>
-                            <td style="padding:9px 6px; text-align:center; color:#8b949e;">${h.popularity}/${h.odds}</td>
-                            <td style="padding:9px 6px; text-align:center; color:${h.value > 1.2 ? '#3fb950' : h.value < 0.8 ? '#f85149' : '#fff'};">${h.value.toFixed(2)}</td>
-                            <td style="padding:9px 6px; text-align:center; color:${h.ability_score > 1.0 ? '#58a6ff' : '#fff'};">
-                                ${h.ability_score.toFixed(2)}
-                                <span style="font-size:0.58rem; color:#666; display:block;">
-                                    ${h.ability_source === 'recent' ? '📊近走' : h.ability_source === 'time_index' ? '📈指数' : '❓不明'}
-                                </span>
-                            </td>
-                            <td style="padding:9px 6px; text-align:center;">${h.jiku_bonus > 1.0 || h.db_bonus > 1.0 ? '🔥' : '-'}</td>
-                            <td style="padding:9px 6px; text-align:center;">${(h.upset_score || 0) > 0.5 ? '🎲' : '-'}</td>
-                            <td style="padding:9px 6px; text-align:center; font-weight:900; color:${i === 0 ? '#d4af37' : '#fff'};">${h.score.toFixed(1)}</td>
-                        </tr>`).join('')}
+                    ${scored.map((h, i) => {
+                        const isHonmei  = honmei  && h.number === honmei.number;
+                        const isTaikou  = taikou  && taikou.some(t => t.number === h.number);
+                        const isAna     = ana     && ana.some(a => a.number === h.number);
+                        const roleMark  = isHonmei ? '◎' : isTaikou ? '○' : isAna ? '🎲' : '';
+                        const nameColor = isHonmei ? '#d4af37' : isTaikou ? '#58a6ff' : isAna ? '#ff9800' : '#c9d1d9';
+                        const srcBadge  = h.ability_source === 'recent' ? '📊' : h.ability_source === 'time_index' ? '📈' : '❓';
+                        return `
+                            <tr style="background:${i === 0 ? 'rgba(212,175,55,0.06)' : 'transparent'}">
+                                <td style="color:${nameColor};font-weight:${i < 3 ? '900' : '400'};">
+                                    ${roleMark} ${h.number} ${h.name}
+                                </td>
+                                <td style="color:#8b949e;">${h.popularity}/${h.odds}</td>
+                                <td style="color:${h.value > 1.2 ? '#3fb950' : h.value < 0.8 ? '#f85149' : '#fff'};">${h.value.toFixed(2)}</td>
+                                <td style="color:${h.ability_score > 1.0 ? '#58a6ff' : '#fff'};">
+                                    ${h.ability_score.toFixed(2)}<span style="font-size:0.55rem;color:#555;"> ${srcBadge}</span>
+                                </td>
+                                <td>${(h.upset_score || 0) > 0.5 ? '🎲' : '-'}</td>
+                                <td style="font-weight:900;color:${i === 0 ? '#d4af37' : '#fff'};">${h.score.toFixed(1)}</td>
+                            </tr>`;
+                    }).join('')}
                 </tbody>
             </table>
         </div>
-        <p style="font-size:0.62rem; color:#8b949e; margin-top:8px; text-align:center;">
-            🔥 = ユーザーDNA一致 ／ 🎲 = 穴馬候補（妙味高×低人気）
-        </p>
-    `;
-    container.appendChild(tbl);
+        <p style="font-size:0.6rem;color:#555;text-align:center;margin-top:6px;padding-bottom:1rem;">
+            📊=近走成績 📈=タイム指数 ❓=データ不明 ／ 🎲=穴馬候補 ／ 🔥=ユーザーDNA一致
+        </p>`;
+
+    container.innerHTML = html;
 }
 
-async function saveBet(btn, bet) {
-    if (!currentData || !btn) return;
-    btn.disabled = true; btn.textContent = '...';
-    try {
-        const res = await fetch('/api/save_bet', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                race_id: currentData.race_id,
-                race_name: currentData.race_name,
-                bet_type: bet.type, bet_method: bet.method,
-                points: bet.points, amount: bet.total,
-                jiku_horses: bet.jiku.map(h => h.number).join(','),
-                aite_horses: bet.aite.map(h => h.number).join(','),
-                jiku_names: bet.jiku.map(h => h.name).join(','),
-                aite_names: bet.aite.map(h => h.name).join(','),
-                jiku_pops: bet.jiku.map(h => h.popularity).join(','),
-                aite_pops: bet.aite.map(h => h.popularity).join(','),
-                jiku_odds: bet.jiku.map(h => h.odds).join(','),
-                aite_odds: bet.aite.map(h => h.odds).join(','),
-            })
-        });
-        if (res.ok) { btn.textContent = '済'; btn.style.background = '#3fb950'; }
-    } catch (e) { btn.disabled = false; btn.textContent = 'Err'; }
-}
-
+/** ── 解析実行 ── */
 async function fetchAnalysis() {
     const urlEl = safeEl('netkeiba-url');
     if (!urlEl) return;
     const urlValue = urlEl.value.trim();
     const match = urlValue.match(/race_id=(\d{12})/) || urlValue.match(/race\/(\d{12})/) || urlValue.match(/(\d{12})/);
-    if (!match) { showError("netkeibaのURLまたは12桁のレースIDを入力してください"); return; }
+    if (!match) { showError('netkeibaのURLまたは12桁のレースIDを入力してください'); return; }
 
-    const budget = parseInt(safeEl('user-budget')?.value) || 10000;
     const btn = safeEl('fetch-odds-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Agentが思考中...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'AI分析中...⏳'; }
 
-    const container = safeEl('bet-cards-container');
-    if (container) container.innerHTML = `<div style="text-align:center; padding:4rem; color:#8b949e;"><div style="font-size:2rem; margin-bottom:10px;">🧠</div><p>Agent Managerが全馬を分析中...<br>最適な戦略を構築しています</p></div>`;
+    const container = safeEl('results-container');
+    if (container) container.innerHTML = `
+        <div style="text-align:center;padding:4rem 1rem;color:#8b949e;">
+            <div style="font-size:2.5rem;margin-bottom:12px;">🧠</div>
+            <p style="font-size:0.9rem;">全馬の近走成績・妙味・実力を<br>AIが分析中...</p>
+            <p style="font-size:0.7rem;color:#555;margin-top:8px;">（初回は20秒ほどかかる場合があります）</p>
+        </div>`;
 
     try {
-        const res = await fetch(`/api/predict?race_id=${match[1]}&budget=${budget}`);
+        const res = await fetch(`/api/predict?race_id=${match[1]}&budget=1000`);
         const data = await res.json();
         if (data.success) {
             currentData = data;
             renderApp(data);
         } else {
-            showError("データ取得に失敗しました");
+            showError('データ取得に失敗しました');
         }
-    } catch (e) { showError(e.message); }
-    finally { if (btn) { btn.disabled = false; btn.textContent = '解析'; } }
+    } catch (e) {
+        showError(e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '解析スタート 🔍'; }
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     loadProfileStatus();
     safeEl('fetch-odds-btn')?.addEventListener('click', fetchAnalysis);
-    safeEl('user-budget')?.addEventListener('change', fetchAnalysis);
 });
 
-console.log("App V16 — 本命/対抗/穴馬 + 4券種 + おすすめ順 — Active.");
+console.log('App V16 — 馬評価特化モード — Active.');
