@@ -35,33 +35,38 @@ class ScoringAgent:
             positions = recent_stats.get("positions", [])
             agari_times = recent_stats.get("agari", [])
 
+            # --- 近走生データを保存（ai_comment生成用） ---
+            item["recent_positions"] = positions
+            item["avg_pos_raw"] = round(sum(positions) / len(positions), 1) if positions else None
+            item["top3_count"] = sum(1 for p in positions if p <= 3) if positions else 0
+            item["avg_agari_raw"] = round(sum(agari_times) / len(agari_times), 1) if agari_times else None
+
             if positions:
-                # 近走着順からスコア算出（直近5走の平均着順ベース）
                 avg_pos = sum(positions) / len(positions)
                 top3_rate = sum(1 for p in positions if p <= 3) / len(positions)
-                # pos_score: 1着=100, 1位下がるごとに約-3.5, top3率ボーナス+8
                 pos_score = max(60.0, 100.0 - (avg_pos - 1.0) * 3.5 + top3_rate * 8.0)
-                # 上がり3Fボーナス: 33秒台=速い(+4), 37秒台=遅い(-4)
                 agari_bonus = 0.0
                 if agari_times:
                     avg_agari = sum(agari_times) / len(agari_times)
                     agari_bonus = max(-4.0, min(4.0, (35.5 - avg_agari) * 1.5))
                 av = pos_score + agari_bonus
                 item["ability_score"] = math.pow(max(av, 1) / 92.0, 1.6)
-                item["ability_source"] = "recent"  # 近走成績ベース
+                item["ability_source"] = "recent"
             else:
                 raw_max = ability.get("max", 0)
                 raw_avg = ability.get("avg", 0)
                 raw_last = ability.get("last", 0)
                 if raw_max > 0 or raw_avg > 0 or raw_last > 0:
-                    # タイム指数フォールバック（直近重視）
                     av = raw_last * 0.5 + raw_avg * 0.3 + raw_max * 0.2
                     item["ability_score"] = math.pow(max(av, 1) / 92.0, 1.6)
                     item["ability_source"] = "time_index"
                 else:
-                    # 実力データなし（未出走・データ取得失敗）
                     item["ability_score"] = 0.75
                     item["ability_source"] = "default"
+
+            # expected_odds（妙味計算に使った期待オッズ）も保存
+            item["expected_odds"] = exp
+
 
 
             # 3. 安定度 (V16: 人気依存を緩和、実力指数がある馬を補正)
