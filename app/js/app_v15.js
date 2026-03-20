@@ -126,7 +126,7 @@ function renderApp(data) {
     // ─── ① 馬名一覧サマリーカード（最上部）───
     html += `
         <div style="background:linear-gradient(135deg,#1c2128,#161b22);border:1px solid #d4af37;border-radius:16px;padding:14px 16px;margin-bottom:18px;">
-            <div style="font-size:0.65rem;color:#d4af37;font-weight:900;letter-spacing:1px;margin-bottom:10px;">🏇 AI ピックアップ一覧</div>
+            <div style="font-size:0.65rem;color:#d4af37;font-weight:900;letter-spacing:1px;margin-bottom:10px;">🏇 ピックアップ</div>
             <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
                 ${honmei ? `
                 <tr>
@@ -155,7 +155,7 @@ function renderApp(data) {
                 ${(dna_horses || []).map(h => `
                 <tr>
                     <td style="padding:5px 0;white-space:nowrap;">
-                        <span style="background:#3fb950;color:#000;font-weight:900;font-size:0.7rem;padding:2px 7px;border-radius:4px;">🔥 DNA</span>
+                        <span style="background:#3fb950;color:#000;font-weight:900;font-size:0.7rem;padding:2px 7px;border-radius:4px;">⭐ おすすめ</span>
                     </td>
                     <td style="padding:5px 8px;font-weight:700;color:#c9d1d9;">${h.number}. ${h.name}</td>
                     <td style="padding:5px 0;font-size:0.7rem;color:#8b949e;text-align:right;">${h.popularity}人気 ${h.odds}倍</td>
@@ -187,7 +187,7 @@ function renderApp(data) {
 
     // ─── ② DNAマッチ馬セクション ───
     if (dna_horses && dna_horses.length > 0) {
-        html += `<h2 style="font-size:0.78rem;color:#3fb950;letter-spacing:1px;margin:22px 0 10px;">▼ 🔥 あなたのDNAに合う馬</h2>
+        html += `<h2 style="font-size:0.78rem;color:#3fb950;letter-spacing:1px;margin:22px 0 10px;">▼ ⭐ あなたへのおすすめ</h2>
         <div style="background:rgba(63,185,80,0.07);border:1px solid rgba(63,185,80,0.3);border-radius:14px;padding:12px;margin-bottom:14px;">
             <p style="font-size:0.68rem;color:#8b949e;margin:0 0 10px;">過去の買い目履歴（的中率・回収率）と人気帯がマッチする馬です。</p>`;
         dna_horses.forEach(h => {
