@@ -97,23 +97,74 @@ class ScoringAgent:
             )
 
             # 7. 穴馬スコア (V16追加)
-            # 人気6位以下かつ（妙味が高い OR オッズが高い）馬を穴馬候補として識別
-            # ※人気9位以上は base配列外となりvalue計算が低めになるため、
-            #   オッズ絶対値（20倍以上）でも拾えるよう二段構えで判定する
             is_upset_candidate = (
                 item["popularity"] >= 6
                 and (item["value"] >= 0.9 or item["odds"] >= 20.0)
-                and item["ability_score"] >= 0.85  # 実力指数がある程度ある馬のみ
+                and item["ability_score"] >= 0.85
             )
             if is_upset_candidate:
-                # 人気が低いほど・妙味が高いほど・オッズが高いほど高スコア
                 odds_factor = math.log(item["odds"] + 1) / 4.0
                 item["upset_score"] = (item["value"] + odds_factor) * math.log(item["popularity"] + 1) * 0.4
             else:
                 item["upset_score"] = 0.0
+
+            # 8. スコア内訳（フロント表示用の根拠テキスト）
+            breakdown = {}
+
+            # 妙味の根拠
+            if exp > 0:
+                if item["value"] > 1.3:
+                    breakdown["value"] = f"オッズ {item['odds']}倍 ÷ {item['popularity']}人気の期待値 {exp}倍 = {item['value']:.2f}（お得水準）"
+                elif item["value"] > 1.0:
+                    breakdown["value"] = f"オッズ {item['odds']}倍 ÷ 期待値 {exp}倍 = {item['value']:.2f}（ほぼ適正）"
+                else:
+                    breakdown["value"] = f"オッズ {item['odds']}倍 ÷ 期待値 {exp}倍 = {item['value']:.2f}（割高水準）"
+            else:
+                breakdown["value"] = "オッズデータなし"
+
+            # 実力の根拠
+            if item["ability_source"] == "recent" and positions:
+                avg_p = sum(positions) / len(positions)
+                top3 = sum(1 for p in positions if p <= 3)
+                agari_str = f"・平均上がり {sum(agari_times)/len(agari_times):.1f}秒" if agari_times else ""
+                breakdown["ability"] = (
+                    f"近{len(positions)}走の平均着順 {avg_p:.1f}位（3着内 {top3}回）{agari_str}"
+                    f" → 実力スコア {item['ability_score']:.2f}"
+                )
+            elif item["ability_source"] == "time_index":
+                raw = item["ability"]
+                breakdown["ability"] = (
+                    f"タイム指数：最大 {raw.get('max',0)} / 平均 {raw.get('avg',0)} / 直近 {raw.get('last',0)}"
+                    f" → 実力スコア {item['ability_score']:.2f}"
+                )
+            else:
+                breakdown["ability"] = "近走・タイム指数ともにデータなし（未出走または取得失敗）"
+
+            # 安定度の根拠
+            if item["popularity"] == 1 and item["odds"] < 2.5:
+                breakdown["stability"] = f"{item['popularity']}番人気だが単勝{item['odds']}倍の過剰人気のためペナルティ適用"
+            else:
+                breakdown["stability"] = f"{item['popularity']}番人気ベースの安定指数（人気が低いほど下がる基礎指標）"
+
+            # DNA（ユーザープロファイル）の根拠
+            if not user_profile:
+                breakdown["dna"] = "履歴データなし（simulation画面からCSVをインポートすると有効化）"
+            elif jiku_bonus > 1.0 and db_bonus > 1.05:
+                breakdown["dna"] = f"🔥 {item['popularity']}人気は過去の軸馬として的中実績あり＋人気帯の回収率も高い（+{(jiku_bonus*db_bonus-1)*100:.0f}%ボーナス）"
+            elif jiku_bonus > 1.0:
+                breakdown["dna"] = f"🔥 {item['popularity']}人気は過去の軸馬として的中実績あり（+{(jiku_bonus-1)*100:.0f}%ボーナス）"
+            elif db_bonus > 1.05:
+                breakdown["dna"] = f"📈 {item['popularity']}人気帯での回収率が高い傾向（×{db_bonus:.2f}倍ボーナス）"
+            elif db_bonus < 0.95:
+                breakdown["dna"] = f"📉 {item['popularity']}人気帯での回収率が低い傾向（×{db_bonus:.2f}倍ペナルティ）"
+            else:
+                breakdown["dna"] = "通常評価（この人気帯の的中・回収データは平均的）"
+
+            item["score_breakdown"] = breakdown
 
             scored.append(item)
 
         # スコア順にソート
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored
+

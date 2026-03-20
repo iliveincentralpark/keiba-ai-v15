@@ -150,6 +150,22 @@ function horseCard(h, role, rank) {
         ? '<span style="background:#3fb950;color:#000;font-size:0.58rem;font-weight:900;padding:2px 6px;border-radius:4px;margin-left:6px;">🔥DNA</span>'
         : '';
 
+    // スコア内訳（breakdown）
+    const bd = h.score_breakdown || {};
+    const breakdownId = `bd-${h.number}-${role}`;
+    const breakdownHTML = (bd.value || bd.ability || bd.stability || bd.dna) ? `
+        <details style="margin-top:8px;">
+            <summary style="font-size:0.68rem;color:#58a6ff;cursor:pointer;list-style:none;padding:4px 0;">
+                🔍 なぜこのスコア？（タップで確認）
+            </summary>
+            <div style="background:rgba(0,0,0,0.4);border-radius:8px;padding:10px;margin-top:6px;font-size:0.68rem;line-height:1.8;">
+                ${bd.value    ? `<div><span style="color:#3fb950;font-weight:700;">妙味：</span>${bd.value}</div>`    : ''}
+                ${bd.ability  ? `<div><span style="color:#58a6ff;font-weight:700;">実力：</span>${bd.ability}</div>`  : ''}
+                ${bd.stability? `<div><span style="color:#8b949e;font-weight:700;">安定：</span>${bd.stability}</div>`: ''}
+                ${bd.dna      ? `<div><span style="color:#3fb950;font-weight:700;">DNA：</span>${bd.dna}</div>`      : ''}
+            </div>
+        </details>` : '';
+
     return `
         <div class="role-card ${r.cls}">
             <div class="role-label ${r.cls}">${r.emoji} ${r.label}</div>
@@ -164,6 +180,7 @@ function horseCard(h, role, rank) {
             ${scoreBar('実力', h.ability_score, abilityMax, bc.ability)}
             ${h.upset_score > 0 ? scoreBar('穴', h.upset_score, 5, bc.upset) : ''}
             <div class="reason-box ${r.cls}">💡 ${buildReason(h, role)}</div>
+            ${breakdownHTML}
         </div>`;
 }
 
@@ -196,7 +213,7 @@ function renderApp(data) {
     // ─── ① 本命・対抗・穴馬カード ───
     html += `<h2 style="font-size:0.78rem;color:#8b949e;letter-spacing:1px;margin:18px 0 12px;">▼ AI馬評価</h2>`;
 
-    const { honmei, taikou, ana } = horse_roles || {};
+    const { honmei, taikou, ana, dna_horses } = horse_roles || {};
 
     if (honmei) {
         html += horseCard(honmei, 'honmei', 1);
@@ -208,6 +225,30 @@ function renderApp(data) {
         ana.forEach(h => { html += horseCard(h, 'ana', 0); });
     } else {
         html += `<div style="text-align:center;color:#555;font-size:0.72rem;padding:10px 0 6px;">🛡️ 穴馬候補なし（比較的堅いレース）</div>`;
+    }
+
+    // ─── ② DNAマッチ馬セクション ───
+    if (dna_horses && dna_horses.length > 0) {
+        html += `<h2 style="font-size:0.78rem;color:#3fb950;letter-spacing:1px;margin:22px 0 10px;">▼ 🔥 あなたのDNAに合う馬</h2>
+        <div style="background:rgba(63,185,80,0.07);border:1px solid rgba(63,185,80,0.3);border-radius:14px;padding:12px;margin-bottom:14px;">
+            <p style="font-size:0.68rem;color:#8b949e;margin:0 0 10px;">過去の買い目履歴（的中率・回収率）と人気帯がマッチする馬です。</p>`;
+        dna_horses.forEach(h => {
+            const bd = h.score_breakdown || {};
+            html += `
+                <div style="display:flex;align-items:center;gap:10px;padding:8px;background:rgba(0,0,0,0.3);border-radius:10px;margin-bottom:8px;">
+                    <span style="font-size:1.3rem;">🔥</span>
+                    <div style="flex:1;">
+                        <div style="font-weight:900;color:#fff;font-size:0.9rem;">${h.number}. ${h.name}</div>
+                        <div style="font-size:0.68rem;color:#8b949e;">${h.popularity}人気 / ${h.odds}倍</div>
+                        ${bd.dna ? `<div style="font-size:0.66rem;color:#3fb950;margin-top:3px;">${bd.dna}</div>` : ''}
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:0.6rem;color:#8b949e;">総合</div>
+                        <div style="font-weight:900;color:#d4af37;">${h.score.toFixed(1)}</div>
+                    </div>
+                </div>`;
+        });
+        html += `</div>`;
     }
 
     // ─── ② 全馬スコアテーブル ───
