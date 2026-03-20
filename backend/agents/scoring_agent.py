@@ -101,17 +101,22 @@ class ScoringAgent:
                 * 2.0
             )
 
-            # 7. 穴馬スコア (V16追加)
+            # 7. 穴馬スコア (V16改: 中穴〜大穴を正しく捕捉)
+            # 旧: ability_score >= 0.85 は「着順データなし → 0.75固定」で中人気馬が除外されるバグあり
+            # 新: 実力閾値を緩和し、オッズと妙味で穴度を判定
             is_upset_candidate = (
-                item["popularity"] >= 6
-                and (item["value"] >= 0.9 or item["odds"] >= 20.0)
-                and item["ability_score"] >= 0.85
+                item["popularity"] >= 5        # 5人気以下（中穴〜大穴）
+                and item["odds"] >= 10.0       # 単勝10倍以上
+                and item["value"] >= 0.80      # 期待値の80%以上のオッズ（多少の妙味あり）
+                and item["ability_score"] >= 0.65  # 実力データ最低限あり（完全未知馬を除外）
             )
             if is_upset_candidate:
+                # 人気が低いほど・オッズが高いほど・妙味があるほど高スコア
                 odds_factor = math.log(item["odds"] + 1) / 4.0
                 item["upset_score"] = (item["value"] + odds_factor) * math.log(item["popularity"] + 1) * 0.4
             else:
                 item["upset_score"] = 0.0
+
 
             # 8. スコア内訳（フロント表示用の根拠テキスト）
             breakdown = {}
