@@ -121,10 +121,57 @@ function renderApp(data) {
 
     let html = '';
 
-    // ─── ① 本命・対抗・穴馬カード ───
-    html += `<h2 style="font-size:0.78rem;color:#8b949e;letter-spacing:1px;margin:18px 0 12px;">▼ AI馬評価</h2>`;
-
     const { honmei, taikou, ana, dna_horses } = horse_roles || {};
+
+    // ─── ① 馬名一覧サマリーカード（最上部）───
+    html += `
+        <div style="background:linear-gradient(135deg,#1c2128,#161b22);border:1px solid #d4af37;border-radius:16px;padding:14px 16px;margin-bottom:18px;">
+            <div style="font-size:0.65rem;color:#d4af37;font-weight:900;letter-spacing:1px;margin-bottom:10px;">🏇 AI ピックアップ一覧</div>
+            <table style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                ${honmei ? `
+                <tr>
+                    <td style="padding:5px 0;white-space:nowrap;width:50px;">
+                        <span style="background:#d4af37;color:#000;font-weight:900;font-size:0.7rem;padding:2px 7px;border-radius:4px;">◎ 本命</span>
+                    </td>
+                    <td style="padding:5px 8px;font-weight:900;color:#fff;">${honmei.number}. ${honmei.name}</td>
+                    <td style="padding:5px 0;font-size:0.7rem;color:#8b949e;text-align:right;">${honmei.popularity}人気 ${honmei.odds}倍</td>
+                </tr>` : ''}
+                ${(taikou || []).map(h => `
+                <tr>
+                    <td style="padding:5px 0;white-space:nowrap;">
+                        <span style="background:#58a6ff;color:#000;font-weight:900;font-size:0.7rem;padding:2px 7px;border-radius:4px;">○ 対抗</span>
+                    </td>
+                    <td style="padding:5px 8px;font-weight:700;color:#c9d1d9;">${h.number}. ${h.name}</td>
+                    <td style="padding:5px 0;font-size:0.7rem;color:#8b949e;text-align:right;">${h.popularity}人気 ${h.odds}倍</td>
+                </tr>`).join('')}
+                ${(ana || []).map(h => `
+                <tr>
+                    <td style="padding:5px 0;white-space:nowrap;">
+                        <span style="background:#ff9800;color:#000;font-weight:900;font-size:0.7rem;padding:2px 7px;border-radius:4px;">🎲 穴馬</span>
+                    </td>
+                    <td style="padding:5px 8px;font-weight:700;color:#c9d1d9;">${h.number}. ${h.name}</td>
+                    <td style="padding:5px 0;font-size:0.7rem;color:#8b949e;text-align:right;">${h.popularity}人気 ${h.odds}倍</td>
+                </tr>`).join('')}
+                ${(dna_horses || []).map(h => `
+                <tr>
+                    <td style="padding:5px 0;white-space:nowrap;">
+                        <span style="background:#3fb950;color:#000;font-weight:900;font-size:0.7rem;padding:2px 7px;border-radius:4px;">🔥 DNA</span>
+                    </td>
+                    <td style="padding:5px 8px;font-weight:700;color:#c9d1d9;">${h.number}. ${h.name}</td>
+                    <td style="padding:5px 0;font-size:0.7rem;color:#8b949e;text-align:right;">${h.popularity}人気 ${h.odds}倍</td>
+                </tr>`).join('')}
+                ${!(ana && ana.length > 0) ? `
+                <tr>
+                    <td style="padding:5px 0;white-space:nowrap;">
+                        <span style="background:#333;color:#666;font-weight:900;font-size:0.7rem;padding:2px 7px;border-radius:4px;">🎲 穴馬</span>
+                    </td>
+                    <td style="padding:5px 8px;font-size:0.72rem;color:#555;" colspan="2">なし（堅いレース）</td>
+                </tr>` : ''}
+            </table>
+        </div>`;
+
+    // ─── ② 各馬の詳細カード ───
+    html += `<h2 style="font-size:0.78rem;color:#8b949e;letter-spacing:1px;margin:18px 0 12px;">▼ AI馬評価（詳細）</h2>`;
 
     if (honmei) {
         html += horseCard(honmei, 'honmei', 1);
