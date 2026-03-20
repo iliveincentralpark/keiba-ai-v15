@@ -21,41 +21,91 @@ class StrategyAgent:
         is_low_odds = top_odds < 3.0
         is_medium_field = len(scored) >= 10
 
+        # 穴馬候補がいるかどうかの判定 (V16)
+        has_upset_candidate = any(h.get("upset_score", 0) > 1.0 for h in scored)
+
         return {
             "isClearFavorite": is_clear_favorite,
             "isLowOdds": is_low_odds,
             "isMediumField": is_medium_field,
+            "hasUpsetCandidate": has_upset_candidate,
             "scoreGap": score_gap,
             "topOdds": top_odds,
             "topPop": top_pop,
         }
 
     def _candidate_patterns(self, user_profile, condition):
-        patterns = []
-        if user_profile:
-            patterns.extend(user_profile.get("preferred_strategies", []))
-
-        defaults = [
-            {"bet_type": "3連複", "bet_method": "1頭軸"},
-            {"bet_type": "馬連", "bet_method": "1頭軸"},
-            {"bet_type": "3連複", "bet_method": "2頭軸"},
+        """
+        V16: 4券種をデフォルトで候補に追加し、おすすめ順（priority）を設定。
+        レース条件に応じて優先順位を変動させる。
+        """
+        # ベースパターン（常に存在する4種）
+        base_patterns = [
+            {"bet_type": "3連複", "bet_method": "1頭軸",     "priority": 1, "priority_label": "◎推奨"},
+            {"bet_type": "馬連",  "bet_method": "1頭軸",     "priority": 2, "priority_label": "○安定"},
+            {"bet_type": "ワイド","bet_method": "BOX",        "priority": 3, "priority_label": "△妙味"},
+            {"bet_type": "3連単", "bet_method": "フォーメーション", "priority": 4, "priority_label": "☆配当"},
         ]
-        if condition.get("isClearFavorite") and not condition.get("isLowOdds"):
-            defaults.append({"bet_type": "馬単", "bet_method": "1頭軸"})
-        elif condition.get("isLowOdds"):
-            defaults.append({"bet_type": "ワイド", "bet_method": "BOX"})
-        else:
-            defaults.append({"bet_type": "3連単", "bet_method": "フォーメーション"})
 
+        # レース条件による優先順位変動
+        if condition.get("isClearFavorite") and not condition.get("isLowOdds"):
+            # 本命突出型：馬単・3連単を上位に
+            base_patterns = [
+                {"bet_type": "馬単",  "bet_method": "1頭軸",         "priority": 1, "priority_label": "◎推奨"},
+                {"bet_type": "3連単", "bet_method": "フォーメーション","priority": 2, "priority_label": "○配当"},
+                {"bet_type": "3連複", "bet_method": "1頭軸",          "priority": 3, "priority_label": "△安定"},
+                {"bet_type": "馬連",  "bet_method": "1頭軸",          "priority": 4, "priority_label": "☆押さえ"},
+            ]
+        elif condition.get("isLowOdds"):
+            # 低オッズ本命型：ワイド・3連複2頭軸を上位に
+            base_patterns = [
+                {"bet_type": "ワイド","bet_method": "BOX",       "priority": 1, "priority_label": "◎推奨"},
+                {"bet_type": "3連複", "bet_method": "2頭軸",     "priority": 2, "priority_label": "○安定"},
+                {"bet_type": "馬連",  "bet_method": "1頭軸",     "priority": 3, "priority_label": "△押さえ"},
+                {"bet_type": "3連複", "bet_method": "1頭軸",     "priority": 4, "priority_label": "☆妙味"},
+            ]
+        elif condition.get("hasUpsetCandidate"):
+            # 穴馬候補あり：ワイド・3連複を上位に
+            base_patterns = [
+                {"bet_type": "3連複", "bet_method": "1頭軸",          "priority": 1, "priority_label": "◎推奨"},
+                {"bet_type": "ワイド","bet_method": "BOX",             "priority": 2, "priority_label": "○穴狙い"},
+                {"bet_type": "3連単", "bet_method": "フォーメーション","priority": 3, "priority_label": "△配当"},
+                {"bet_type": "馬連",  "bet_method": "1頭軸",           "priority": 4, "priority_label": "☆安定"},
+            ]
+
+        # ユーザー過去プロファイルによる優先順位補正
+        preferred = []
+        if user_profile:
+            preferred = user_profile.get("preferred_strategies", [])
+
+        patterns = []
         seen = set()
-        deduped = []
-        for pattern in patterns + defaults:
-            key = (pattern["bet_type"], pattern["bet_method"])
-            if key in seen:
-                continue
-            seen.add(key)
-            deduped.append(pattern)
-        return deduped
+
+        # まずユーザー好みのパターンを先に入れる
+        for pref in preferred:
+            key = (pref["bet_type"], pref["bet_method"])
+            if key not in seen:
+                seen.add(key)
+                # 対応するベースパターンのlabelを探す
+                label = next(
+                    (p["priority_label"] for p in base_patterns
+                     if p["bet_type"] == pref["bet_type"] and p["bet_method"] == pref["bet_method"]),
+                    "◎推奨"
+                )
+                patterns.append({
+                    "bet_type": pref["bet_type"],
+                    "bet_method": pref["bet_method"],
+                    "priority": 0,  # ユーザー優先
+                    "priority_label": label,
+                })
+
+        for p in base_patterns:
+            key = (p["bet_type"], p["bet_method"])
+            if key not in seen:
+                seen.add(key)
+                patterns.append(p)
+
+        return patterns
 
     def _select_primary_axis(self, scored):
         return scored[0]
@@ -78,12 +128,31 @@ class StrategyAgent:
             secondary = scored[1] if len(scored) > 1 else primary
         return [primary, secondary]
 
+    def _select_upset_horse(self, scored, excluded_numbers):
+        """
+        V16追加: 穴馬候補（upset_score上位）を選出
+        """
+        candidates = [
+            h for h in scored
+            if h["number"] not in excluded_numbers and h.get("upset_score", 0) > 0
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda x: x["upset_score"])
+
     def _pick_aite(self, scored, excluded_numbers, count, emphasis="balance"):
         candidates = [h for h in scored if h["number"] not in excluded_numbers]
         if emphasis == "value":
             ordered = sorted(candidates, key=lambda x: (x["value"], x["score"]), reverse=True)
         elif emphasis == "stability":
             ordered = sorted(candidates, key=lambda x: (x["score"], -x["popularity"]), reverse=True)
+        elif emphasis == "upset":
+            # 穴馬重視：upset_scoreが高い馬を先に、次に通常スコア順
+            ordered = sorted(
+                candidates,
+                key=lambda x: (x.get("upset_score", 0) * 0.5 + x["value"] * 0.5, x["score"]),
+                reverse=True
+            )
         else:
             ordered = sorted(candidates, key=lambda x: (x["score"] * 0.6 + x["value"] * 0.4, -x["popularity"]), reverse=True)
         return ordered[:count]
@@ -123,50 +192,57 @@ class StrategyAgent:
     def _build_bet(self, pattern, scored, condition, user_profile):
         bet_type = pattern["bet_type"]
         bet_method = pattern["bet_method"]
+        priority = pattern.get("priority", 1)
+        priority_label = pattern.get("priority_label", "◎推奨")
         aite_count = self._estimate_aite_count(bet_type, bet_method, user_profile)
 
         if bet_type == "3連複" and bet_method == "1頭軸":
             jiku = [self._select_primary_axis(scored)]
             aite = self._pick_aite(scored, {jiku[0]["number"]}, aite_count, "balance")
-            reason = f"過去の主戦法に合わせて{jiku[0]['name']}を1頭軸。相手は総合力と妙味のバランス上位で固める。"
+            reason = f"総合スコア上位の{jiku[0]['name']}を1頭軸に固定。相手は実力・妙味バランスで選定。"
             icon = "🎯"
         elif bet_type == "3連複" and bet_method == "2頭軸":
             jiku = self._select_two_axes(scored)
             aite = self._pick_aite(scored, {h["number"] for h in jiku}, aite_count, "balance")
-            reason = f"得意な2頭軸寄せ。{jiku[0]['name']}と{jiku[1]['name']}を軸に点数を絞って拾う。"
+            reason = f"{jiku[0]['name']}と{jiku[1]['name']}を2頭軸に。点数を絞りながら3連複を狙う。"
             icon = "🎰"
         elif bet_type == "馬連" and bet_method == "1頭軸":
             axis = self._select_value_axis(scored)
             jiku = [axis]
             aite = self._pick_aite(scored, {axis["number"]}, aite_count, "stability")
-            reason = f"回収寄りの馬連パターン。妙味のある{axis['name']}を軸に、相手は安定上位へ流す。"
+            reason = f"妙味スコア上位の{axis['name']}を軸に。相手は安定評価上位へ流す馬連。"
             icon = "🏇"
         elif bet_type == "馬連" and bet_method == "フォーメーション":
             jiku = self._select_two_axes(scored)
             aite = self._pick_aite(scored, {h["number"] for h in jiku}, aite_count, "stability")
-            reason = f"フォーメーション実績を反映し、軸2頭から相手へ広げる。"
+            reason = "フォーメーション実績を反映し、軸2頭から相手へ広げる。"
             icon = "🧩"
         elif bet_type == "馬単" and bet_method == "1頭軸":
             axis = self._select_primary_axis(scored) if condition.get("isClearFavorite") else self._select_value_axis(scored)
             jiku = [axis]
             aite = self._pick_aite(scored, {axis["number"]}, aite_count, "stability")
-            reason = f"頭固定の実績に寄せて{axis['name']}を1着軸。配当を取りにいく馬単。"
+            reason = f"本命突出型レース。{axis['name']}を1着固定で配当を取りにいく馬単。"
             icon = "⚡"
         elif bet_type == "3連単" and bet_method in {"流し", "1頭軸"}:
             axis = self._select_primary_axis(scored)
             jiku = [axis]
             aite = self._pick_aite(scored, {axis["number"]}, aite_count, "value")
-            reason = f"3連単流しの買い方を再現し、{axis['name']}から妙味側へ流す。"
+            reason = f"{axis['name']}から妙味寄りへ流す3連単。高配当を一点狙い。"
             icon = "🚀"
         elif bet_type == "3連単" and bet_method == "フォーメーション":
             jiku = self._select_two_axes(scored)
-            aite = self._pick_aite(scored, {h["number"] for h in jiku}, aite_count, "value")
-            reason = f"フォーメーション志向を反映。上位軸に中穴候補を混ぜて3連単の跳ねを狙う。"
+            aite = self._pick_aite(scored, {h["number"] for h in jiku}, aite_count, "upset")
+            reason = "上位2頭を軸に穴馬・妙味馬を相手へ混ぜたフォーメーション。跳ねを狙う。"
             icon = "🎇"
         elif bet_type == "ワイド" and bet_method == "BOX":
             jiku = []
-            aite = self._pick_aite(scored, set(), aite_count, "value")
-            reason = "低オッズ本命戦や荒れ待ちで使いやすいワイドBOX。妙味寄りの複数頭で押さえる。"
+            # 穴馬候補を相手に含める
+            upset = self._select_upset_horse(scored, set())
+            base_aite = self._pick_aite(scored, set(), aite_count, "value")
+            if upset and upset not in base_aite:
+                base_aite = base_aite[:aite_count - 1] + [upset]
+            aite = base_aite
+            reason = "妙味上位＋穴馬候補でワイドBOX。複数点でリスクを分散しながら回収を狙う。"
             icon = "🛡️"
         else:
             jiku = [self._select_primary_axis(scored)]
@@ -179,12 +255,14 @@ class StrategyAgent:
             "method": bet_method,
             "icon": icon,
             "reason": reason,
+            "priority": priority,
+            "priority_label": priority_label,
             "jiku": jiku,
             "aite": aite,
         }
 
     def build_strategic_bets(self, scored, condition, budget, user_profile=None):
-        """過去プロファイルを踏まえて戦略を構築"""
+        """過去プロファイルを踏まえて戦略を構築 (V16: 4券種表示・おすすめ順付与)"""
         if not scored:
             return []
 
@@ -203,11 +281,14 @@ class StrategyAgent:
                 continue
             used.add(key)
             bets.append(bet)
-            if len(bets) == 3:
+            if len(bets) == 4:  # V16: 3→4種に拡張
                 break
 
         if not bets:
             return []
+
+        # おすすめ順でソート（priority昇順）
+        bets.sort(key=lambda b: b["priority"])
 
         weights = []
         preferred = (user_profile or {}).get("preferred_strategies", [])
