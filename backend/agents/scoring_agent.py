@@ -15,13 +15,17 @@ class ScoringAgent:
         scored = []
 
         for h in horses_list:
+            raw_odds = h.get("odds")
+            raw_popularity = h.get("popularity")
             item = {
                 "number": int(h["number"]),
                 "name": h.get("name") or f"馬#{h['number']}",
-                "odds": float(h.get("odds", 999)),
-                "popularity": int(h.get("popularity", 99)),
+                "odds": float(raw_odds if raw_odds is not None else 999),
+                "popularity": int(raw_popularity if raw_popularity is not None else 99),
                 "ability": h.get("ability") or {"max": 0, "avg": 0, "last": 0}
             }
+            item["has_valid_odds"] = raw_odds is not None and item["odds"] < 900
+            item["has_valid_popularity"] = raw_popularity is not None and item["popularity"] < 90
 
             # 1. 妙味 (Value): オッズ ÷ 人気別期待オッズ
             base = [0, 2.7, 4.8, 7.5, 11, 16, 24, 32, 48, 65]
@@ -104,16 +108,58 @@ class ScoringAgent:
             # 7. 穴馬スコア (V16改: 中穴〜大穴を正しく捕捉)
             # 旧: ability_score >= 0.85 は「着順データなし → 0.75固定」で中人気馬が除外されるバグあり
             # 新: 実力閾値を緩和し、オッズと妙味で穴度を判定
+            pop = item["popularity"]
+            has_market_data = item["has_valid_odds"] and item["has_valid_popularity"]
+            min_odds = 20.0
+            min_value = 0.50
+            min_ability = 0.68
+            if 5 <= pop <= 6:
+                min_odds = 8.0
+                min_value = 0.60
+            elif 7 <= pop <= 9:
+                min_odds = 12.0
+                min_value = 0.55
+            elif 10 <= pop <= 12:
+                min_odds = 18.0
+                min_value = 0.55
+            elif 13 <= pop <= 15:
+                min_odds = 25.0
+                min_value = 0.62
+                min_ability = 0.78
+            elif pop >= 16:
+                min_odds = 40.0
+                min_value = 0.70
+                min_ability = 0.90
+
             is_upset_candidate = (
-                item["popularity"] >= 5        # 5人気以下（中穴〜大穴）
-                and item["odds"] >= 10.0       # 単勝10倍以上
-                and item["value"] >= 0.80      # 期待値の80%以上のオッズ（多少の妙味あり）
-                and item["ability_score"] >= 0.65  # 実力データ最低限あり（完全未知馬を除外）
+                has_market_data
+                and pop >= 5                   # 5人気以下（中穴〜大穴）
+                and item["odds"] >= min_odds
+                and item["value"] >= min_value
+                and item["ability_score"] >= min_ability
             )
             if is_upset_candidate:
-                # 人気が低いほど・オッズが高いほど・妙味があるほど高スコア
-                odds_factor = math.log(item["odds"] + 1) / 4.0
-                item["upset_score"] = (item["value"] + odds_factor) * math.log(item["popularity"] + 1) * 0.4
+                # 中穴帯を主役にしつつ、超人気薄は実力がないと上がりにくくする
+                value_factor = min(item["value"], 1.55)
+                odds_factor = min(math.log(item["odds"] + 1) / 5.0, 0.95)
+                if pop <= 6:
+                    popularity_factor = 1.12
+                elif pop <= 9:
+                    popularity_factor = 1.18
+                elif pop <= 12:
+                    popularity_factor = 1.05
+                elif pop <= 15:
+                    popularity_factor = 0.90
+                else:
+                    popularity_factor = 0.74
+                ability_factor = 0.85 + item["ability_score"] * 0.65
+                score_factor = 0.82 + min(item["score"], 4.0) * 0.07
+                item["upset_score"] = (
+                    (value_factor * 0.45 + odds_factor * 0.30 + item["ability_score"] * 0.25)
+                    * popularity_factor
+                    * ability_factor
+                    * score_factor
+                )
             else:
                 item["upset_score"] = 0.0
 
@@ -177,4 +223,3 @@ class ScoringAgent:
         # スコア順にソート
         scored.sort(key=lambda x: x["score"], reverse=True)
         return scored
-

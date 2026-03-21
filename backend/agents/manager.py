@@ -104,14 +104,22 @@ class AgentManager:
 
         honmei = scored[0] if len(scored) >= 1 else None
         taikou = scored[1:3] if len(scored) >= 3 else scored[1:] if len(scored) >= 2 else []
+        top_nums = {h["number"] for h in ([honmei] if honmei else []) + taikou}
         upset_candidates = sorted(
-            [h for h in scored if h.get("upset_score", 0) > 0],
+            [h for h in scored if h["number"] not in top_nums and h.get("upset_score", 0) > 0],
             key=lambda x: x["upset_score"], reverse=True
         )
-        ana = upset_candidates[:2]
+        mid_upsets = [h for h in upset_candidates if 5 <= h.get("popularity", 99) <= 12]
+        ana = []
+        if mid_upsets:
+            ana.append(mid_upsets[0])
+        for h in upset_candidates:
+            if h["number"] not in {a["number"] for a in ana}:
+                ana.append(h)
+            if len(ana) >= 2:
+                break
 
         # DNAマッチ馬（本命・対抗以外）
-        top_nums = {h["number"] for h in ([honmei] if honmei else []) + taikou}
         dna_horses = [
             h for h in scored
             if h["number"] not in top_nums
