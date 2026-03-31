@@ -111,28 +111,34 @@ def fetch_all_horse_stats_from_shutuba(race_id: str) -> dict:
 
             for ptd in past_tds:
                 cls = ' '.join(ptd.get('class', []))
-                # Ranking_Nクラスから着順を取得 (Ranking_1=1着, Ranking_2=2着...)
+                raw = ptd.get_text(strip=True)
+
+                # 着順取得：Ranking_Nクラス優先、なければテキストから補完
                 rank_m = re.search(r'Ranking_(\d+)', cls)
                 if rank_m:
                     positions.append(int(rank_m.group(1)))
                 else:
-                    # classに着順なし = 掲示なしまたは除外等
-                    # rawtextからも従来の着順を抽出試み
-                    raw = ptd.get_text(strip=True)
-                    # パターン: 「16頤14番」などから「14番」を抽出し、それが着順でない場合は無視
-                    # 主に「X番」と「X人」が出てくるので 透過等
-                    pass  # Ranking_Nがない場合は着順不明（除外・取消等）
+                    # テキスト補完: 「5着」「除外」「中止」等のパターン
+                    finish_m = re.search(r'^(\d{1,2})着', raw)
+                    if not finish_m:
+                        # 「X頭 Y番 Z人」の直前にある着順数字を狙う
+                        finish_m = re.search(r'(\d{1,2})\s*\d+頭', raw)
+                    if finish_m:
+                        pos_val = int(finish_m.group(1))
+                        if 1 <= pos_val <= 18:
+                            positions.append(pos_val)
+                    # 除外・中止・取消は positions に含めない（エラー扱い）
 
-                # 上がり3Fを抽出: rawtextの末尾厄に (33.x) 形式
-                raw = ptd.get_text(strip=True)
-                agari_m = re.search(r'\((3\d\.\d)\)', raw)  # (33.5) (34.2)など
+                # 上がり3Fを抽出: (33.5) (34.2) (40.1) など30〜49秒台
+                agari_m = re.search(r'\((\d{2}\.\d)\)', raw)
                 if agari_m:
                     try:
                         agari_val = float(agari_m.group(1))
-                        if 30.0 <= agari_val <= 45.0:
+                        if 30.0 <= agari_val <= 49.9:
                             agari_times.append(agari_val)
                     except ValueError:
                         pass
+
 
             if positions or agari_times:
                 result[num] = {"positions": positions, "agari": agari_times}

@@ -73,15 +73,16 @@ class ScoringAgent:
 
 
 
-            # 3. 安定度 (V16: 人気依存を緩和、実力指数がある馬を補正)
-            # 基本は人気に反比例しつつ、ability_scoreが高い馬には追加ボーナス
-            base_stability = 12 / (item["popularity"] + 0.5)
-            ability_bonus = 1.0 + max(0.0, item["ability_score"] - 0.8) * 0.5
-            item["stability"] = base_stability * ability_bonus
+            # 3. 安定度 (V17改: 人気依存幅を大幅圧縮)
+            # 旧: 12/(pop+0.5) → 1人気=8.0, 10人気=1.1（7倍差）
+            # 新: 3.5/(pop+0.5)+1.0 → 1人気=3.3, 10人気=1.3（2.5倍差）
+            # ability_scoreが高い馬がstabilityを超えて本命になれるよう設計
+            base_stability = 3.5 / (item["popularity"] + 0.5) + 1.0
+            item["stability"] = base_stability
 
             # 4. 1番人気が過剰オッズの場合ペナルティ（単勝2.5倍未満）
             if item["popularity"] == 1 and item["odds"] < 2.5:
-                item["stability"] *= 0.35
+                item["stability"] *= 0.55
 
             # 5. User Match (DNA) ボーナス
             jiku_bonus = 1.22 if item["popularity"] in strong_jiku_pops else 1.0
@@ -95,14 +96,16 @@ class ScoringAgent:
             item["jiku_bonus"] = jiku_bonus
             item["db_bonus"] = db_bonus
 
-            # 6. 最終スコア
+            # 6. 最終スコア (V17改: ability_scoreを2.2乗にして実力差を拡大)
+            # 実力スコア1.1の馬と0.75の馬の差: 旧=1.47倍差 → 新=2.15倍差
+            ability_multiplier = math.pow(max(item["ability_score"], 0.1), 2.2)
             item["score"] = (
                 item["stability"]
                 * item["value"]
-                * item["ability_score"]
+                * ability_multiplier
                 * jiku_bonus
                 * db_bonus
-                * 2.0
+                * 4.5
             )
 
             # 7. 穴馬スコア (V16改: 中穴〜大穴を正しく捕捉)

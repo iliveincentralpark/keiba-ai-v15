@@ -231,7 +231,8 @@ function renderApp(data) {
                         const isAna     = ana     && ana.some(a => a.number === h.number);
                         const roleMark  = isHonmei ? '◎' : isTaikou ? '○' : isAna ? '🎲' : '';
                         const nameColor = isHonmei ? '#d4af37' : isTaikou ? '#58a6ff' : isAna ? '#ff9800' : '#c9d1d9';
-                        const srcBadge  = h.ability_source === 'recent' ? '📊' : h.ability_source === 'time_index' ? '📈' : '❓';
+                        const srcBadge  = h.ability_source === 'recent' ? '📊' : h.ability_source === 'time_index' ? '📈' : '⚠️';
+                        const abilityColor = h.ability_source === 'default' ? '#f85149' : h.ability_score > 1.0 ? '#58a6ff' : '#fff';
                         return `
                             <tr style="background:${i === 0 ? 'rgba(212,175,55,0.06)' : 'transparent'}">
                                 <td style="color:${nameColor};font-weight:${i < 3 ? '900' : '400'};">
@@ -239,8 +240,9 @@ function renderApp(data) {
                                 </td>
                                 <td style="color:#8b949e;">${h.popularity}/${h.odds}</td>
                                 <td style="color:${h.value > 1.2 ? '#3fb950' : h.value < 0.8 ? '#f85149' : '#fff'};">${h.value.toFixed(2)}</td>
-                                <td style="color:${h.ability_score > 1.0 ? '#58a6ff' : '#fff'};">
-                                    ${h.ability_score.toFixed(2)}<span style="font-size:0.55rem;color:#555;"> ${srcBadge}</span>
+                                <td style="color:${abilityColor};">
+                                    ${h.ability_score.toFixed(2)}<span style="font-size:0.55rem;color:#888;"> ${srcBadge}</span>
+                                    ${h.ability_source === 'default' ? '<span style="font-size:0.52rem;color:#f85149;display:block;">データなし</span>' : ''}
                                 </td>
                                 <td>${(h.upset_score || 0) > 0.5 ? '🎲' : '-'}</td>
                                 <td style="font-weight:900;color:${i === 0 ? '#d4af37' : '#fff'};">${h.score.toFixed(1)}</td>
