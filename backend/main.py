@@ -179,11 +179,11 @@ def fetch_time_index(race_id: str):
 
 def fetch_horse_stats_from_db_page(horse_id: str) -> dict:
     """
-    db.netkeiba.com/horse/{horse_id}/ から近走成績を取得（Stage2フォールバック）
+    db.netkeiba.com/horse/result/{horse_id}/ から近走成績を取得（Stage2フォールバック）
     shutuba_past.htmlで着順が取れなかった馬の個別ページから補完取得する
     """
     try:
-        url = f"https://db.netkeiba.com/horse/{horse_id}/"
+        url = f"https://db.netkeiba.com/horse/result/{horse_id}/"
         res = requests.get(url, headers=HEADERS, timeout=8)
         res.encoding = 'EUC-JP'
         if res.status_code != 200:
