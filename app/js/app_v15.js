@@ -69,7 +69,7 @@ function horseCard(h, role, rank) {
     const abilitySourceBadge =
         h.ability_source === 'recent'     ? '<span style="font-size:0.6rem;color:#58a6ff;margin-left:5px;">📊近走</span>' :
         h.ability_source === 'time_index' ? '<span style="font-size:0.6rem;color:#8b949e;margin-left:5px;">📈指数</span>' :
-        '<span style="font-size:0.6rem;color:#555;margin-left:5px;">❓不明</span>';
+        '<span style="font-size:0.6rem;color:#f85149;margin-left:5px;">⚠️取得失敗</span>';
 
     const dnaBadge = (h.jiku_bonus > 1.0 || h.db_bonus > 1.0)
         ? '<span style="background:#3fb950;color:#000;font-size:0.58rem;font-weight:900;padding:2px 6px;border-radius:4px;margin-left:6px;">🔥DNA</span>'
@@ -242,7 +242,7 @@ function renderApp(data) {
                                 <td style="color:${h.value > 1.2 ? '#3fb950' : h.value < 0.8 ? '#f85149' : '#fff'};">${h.value.toFixed(2)}</td>
                                 <td style="color:${abilityColor};">
                                     ${h.ability_score.toFixed(2)}<span style="font-size:0.55rem;color:#888;"> ${srcBadge}</span>
-                                    ${h.ability_source === 'default' ? '<span style="font-size:0.52rem;color:#f85149;display:block;">データなし</span>' : ''}
+                                    ${h.ability_source === 'default' ? '<span style="font-size:0.52rem;color:#f85149;display:block;">⚠️取得失敗</span>' : ''}
                                 </td>
                                 <td>${(h.upset_score || 0) > 0.5 ? '🎲' : '-'}</td>
                                 <td style="font-weight:900;color:${i === 0 ? '#d4af37' : '#fff'};">${h.score.toFixed(1)}</td>
@@ -252,7 +252,7 @@ function renderApp(data) {
             </table>
         </div>
         <p style="font-size:0.6rem;color:#555;text-align:center;margin-top:6px;padding-bottom:1rem;">
-            📊=近走成績 📈=タイム指数 ❓=データ不明 ／ 🎲=穴馬候補 ／ 🔥=ユーザーDNA一致
+            📊=近走成績 📈=タイム指数 ⚠️=スクレイプ失敗（スコア大幅減点） ／ 🎲=穴馬候補 ／ 🔥=ユーザーDNA一致
         </p>`;
 
     container.innerHTML = html;

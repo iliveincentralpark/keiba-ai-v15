@@ -33,7 +33,7 @@ class ScoringAgent:
             exp = base[pop_idx] if pop_idx > 0 else item["popularity"] * 8
             item["value"] = item["odds"] / exp if exp > 0 else 0
 
-            # 2. 実力 (V16: 近走成績 → タイム指数 → デフォルトの順でフォールバック)
+            # 2. 実力スコア (V18: 着順差を大幅拡大、人気依存を完全排除)
             ability = item["ability"]
             recent_stats = h.get("recent_stats") or {}
             positions = recent_stats.get("positions", [])
@@ -48,13 +48,31 @@ class ScoringAgent:
             if positions:
                 avg_pos = sum(positions) / len(positions)
                 top3_rate = sum(1 for p in positions if p <= 3) / len(positions)
-                pos_score = max(60.0, 100.0 - (avg_pos - 1.0) * 3.5 + top3_rate * 8.0)
-                agari_bonus = 0.0
+
+                # 連勝チェック（最新から連続して1着か）
+                consecutive_wins = 0
+                for p in positions:
+                    if p == 1:
+                        consecutive_wins += 1
+                    else:
+                        break
+
+                # 着順→スコア変換（差が大きく出る設計）
+                # avg1着=1.50 / avg3着=1.25 / avg5着=1.00 / avg8着=0.63 / avg12着以下=0.35
+                pos_score = max(0.35, 1.5 - (avg_pos - 1.0) * 0.125)
+                pos_score += top3_rate * 0.18  # 3着以内率ボーナス
+
+                # 連勝ボーナス（直近2連勝+8%, 3連勝+16%, 4連勝+24%）
+                if consecutive_wins >= 2:
+                    pos_score *= (1.0 + min(consecutive_wins, 4) * 0.08)
+
+                # 上がり3Fボーナス（35.5秒基準、速いほど加点）
                 if agari_times:
                     avg_agari = sum(agari_times) / len(agari_times)
-                    agari_bonus = max(-4.0, min(4.0, (35.5 - avg_agari) * 1.5))
-                av = pos_score + agari_bonus
-                item["ability_score"] = math.pow(max(av, 1) / 92.0, 1.6)
+                    agari_bonus = max(-0.08, min(0.12, (35.5 - avg_agari) * 0.04))
+                    pos_score += agari_bonus
+
+                item["ability_score"] = min(2.0, max(0.35, pos_score))
                 item["ability_source"] = "recent"
             else:
                 raw_max = ability.get("max", 0)
@@ -62,29 +80,25 @@ class ScoringAgent:
                 raw_last = ability.get("last", 0)
                 if raw_max > 0 or raw_avg > 0 or raw_last > 0:
                     av = raw_last * 0.5 + raw_avg * 0.3 + raw_max * 0.2
-                    item["ability_score"] = math.pow(max(av, 1) / 92.0, 1.6)
+                    # タイム指数75点=1.0基準でスケーリング
+                    item["ability_score"] = max(0.3, min(1.6, av / 75.0))
                     item["ability_source"] = "time_index"
                 else:
-                    item["ability_score"] = 0.75
+                    # 近走・タイム指数ともに取得失敗 → 大幅ペナルティ（旧0.75→新0.40）
+                    item["ability_score"] = 0.40
                     item["ability_source"] = "default"
 
             # expected_odds（妙味計算に使った期待オッズ）も保存
             item["expected_odds"] = exp
 
+            # 3. 妙味係数 (V18: stability廃止 → 人気依存ゼロ。妙味は0.75〜1.35の補正係数のみ)
+            if exp > 0 and item["has_valid_odds"]:
+                value_capped = min(max(item["value"], 0.3), 2.5)
+                item["value_factor"] = min(1.35, 0.75 + 0.24 * value_capped)
+            else:
+                item["value_factor"] = 0.90  # オッズ未確定時
 
-
-            # 3. 安定度 (V17改: 人気依存幅を大幅圧縮)
-            # 旧: 12/(pop+0.5) → 1人気=8.0, 10人気=1.1（7倍差）
-            # 新: 3.5/(pop+0.5)+1.0 → 1人気=3.3, 10人気=1.3（2.5倍差）
-            # ability_scoreが高い馬がstabilityを超えて本命になれるよう設計
-            base_stability = 3.5 / (item["popularity"] + 0.5) + 1.0
-            item["stability"] = base_stability
-
-            # 4. 1番人気が過剰オッズの場合ペナルティ（単勝2.5倍未満）
-            if item["popularity"] == 1 and item["odds"] < 2.5:
-                item["stability"] *= 0.55
-
-            # 5. User Match (DNA) ボーナス
+            # 4. User Match (DNA) ボーナス
             jiku_bonus = 1.22 if item["popularity"] in strong_jiku_pops else 1.0
             pop_weight = float(pop_weights.get(str(item["popularity"]), 1.0))
             if 4 <= item["popularity"] <= 6 and not pop_weights:
@@ -96,13 +110,13 @@ class ScoringAgent:
             item["jiku_bonus"] = jiku_bonus
             item["db_bonus"] = db_bonus
 
-            # 6. 最終スコア (V17改: ability_scoreを2.2乗にして実力差を拡大)
-            # 実力スコア1.1の馬と0.75の馬の差: 旧=1.47倍差 → 新=2.15倍差
-            ability_multiplier = math.pow(max(item["ability_score"], 0.1), 2.2)
+            # 5. 最終スコア (V18: stability廃止、ability^2.0を主軸)
+            # データなし(0.40^2=0.16) vs 連勝3回(1.86^2=3.46) → 22倍の差
+            # 人気1位でもデータなしなら中位以下に落ちる設計
+            ability_power = math.pow(max(item["ability_score"], 0.1), 2.0)
             item["score"] = (
-                item["stability"]
-                * item["value"]
-                * ability_multiplier
+                ability_power
+                * item["value_factor"]
                 * jiku_bonus
                 * db_bonus
                 * 4.5
@@ -199,11 +213,14 @@ class ScoringAgent:
             else:
                 breakdown["ability"] = "近走・タイム指数ともにデータなし（未出走または取得失敗）"
 
-            # 安定度の根拠
-            if item["popularity"] == 1 and item["odds"] < 2.5:
-                breakdown["stability"] = f"{item['popularity']}番人気だが単勝{item['odds']}倍の過剰人気のためペナルティ適用"
+            # 妙味係数の根拠（V18: stability廃止、人気依存ゼロ）
+            vf = item.get("value_factor", 1.0)
+            if vf >= 1.20:
+                breakdown["stability"] = f"妙味係数 {vf:.2f}（オッズ割安 → スコア上乗せ）"
+            elif vf >= 1.00:
+                breakdown["stability"] = f"妙味係数 {vf:.2f}（オッズほぼ適正）"
             else:
-                breakdown["stability"] = f"{item['popularity']}番人気ベースの安定指数（人気が低いほど下がる基礎指標）"
+                breakdown["stability"] = f"妙味係数 {vf:.2f}（オッズ割高 → スコア減点）"
 
             # DNA（ユーザープロファイル）の根拠
             if not user_profile:

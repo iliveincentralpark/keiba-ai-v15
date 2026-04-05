@@ -177,6 +177,64 @@ def fetch_time_index(race_id: str):
     except: pass
     return result
 
+def fetch_horse_stats_from_db_page(horse_id: str) -> dict:
+    """
+    db.netkeiba.com/horse/{horse_id}/ から近走成績を取得（Stage2フォールバック）
+    shutuba_past.htmlで着順が取れなかった馬の個別ページから補完取得する
+    """
+    try:
+        url = f"https://db.netkeiba.com/horse/{horse_id}/"
+        res = requests.get(url, headers=HEADERS, timeout=8)
+        res.encoding = 'EUC-JP'
+        if res.status_code != 200:
+            print(f"[horse_db] horse_id={horse_id} status={res.status_code}")
+            return {}
+
+        soup = BeautifulSoup(res.text, 'html.parser')
+        table = soup.select_one('table.db_h_race_results')
+        if not table:
+            print(f"[horse_db] horse_id={horse_id}: 成績テーブル見つからず")
+            return {}
+
+        rows = table.select('tr')[1:]  # ヘッダー行をスキップ
+        positions = []
+        agari_times = []
+
+        for row in rows[:5]:  # 直近5走
+            tds = row.find_all('td')
+            if len(tds) < 12:
+                continue
+            try:
+                # 着順（index=11、12列目）
+                rank_text = tds[11].get_text(strip=True)
+                rank_clean = re.sub(r'[^\d]', '', rank_text)
+                if rank_clean.isdigit():
+                    pos = int(rank_clean)
+                    if 1 <= pos <= 18:
+                        positions.append(pos)
+
+                # 上がり3F（index=22あたり、複数候補を試みる）
+                for col_idx in [22, 21, 20]:
+                    if len(tds) > col_idx:
+                        agari_text = tds[col_idx].get_text(strip=True)
+                        m = re.match(r'^(\d{2}\.\d)$', agari_text)
+                        if m:
+                            agari_val = float(m.group(1))
+                            if 30.0 <= agari_val <= 49.9:
+                                agari_times.append(agari_val)
+                                break
+            except Exception:
+                continue
+
+        print(f"[horse_db] horse_id={horse_id} → positions={positions[:3]}, agari={agari_times[:3]}")
+        if positions or agari_times:
+            return {"positions": positions, "agari": agari_times}
+        return {}
+    except Exception as e:
+        print(f"[horse_db] horse_id={horse_id} error: {e}")
+        return {}
+
+
 def parse_horses(html: str, race_id: str):
     soup = BeautifulSoup(html, 'html.parser')
     horses = {}
@@ -334,18 +392,46 @@ def predict_race(race_id: str, budget: int = 10000):
 
     raw_horses = res["horses"]
 
-    # 2. 近走成績をshutuba_past.htmlから一括取得 (V16) - 1回のreqで全馬分
-    print(f"[predict] Fetching shutuba_past for {race_id}...")
+    # Stage1: shutuba_past.htmlから全馬一括取得
+    print(f"[predict] Stage1: shutuba_past for {race_id}...")
     recent_stats_map = fetch_all_horse_stats_from_shutuba(race_id)
-    fetched = sum(1 for v in recent_stats_map.values() if v)
-    print(f"[predict] recent_stats fetched: {fetched}/{len(raw_horses)} horses")
+    stage1_ok = sum(1 for v in recent_stats_map.values() if v and v.get("positions"))
+    print(f"[predict] Stage1: {stage1_ok}/{len(raw_horses)} 頭の着順取得")
 
-    # 3. horses_list に recent_stats を追加
+    # Stage2: Stage1で着順が取れなかった馬を個別DBページから補完
+    missing = [
+        (int(num_str), data.get("_horse_id"))
+        for num_str, data in raw_horses.items()
+        if data.get("_horse_id") and (
+            int(num_str) not in recent_stats_map
+            or not recent_stats_map.get(int(num_str), {}).get("positions")
+        )
+    ]
+    if missing:
+        print(f"[predict] Stage2: {len(missing)} 頭を個別DBページから補完中...")
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {
+                executor.submit(fetch_horse_stats_from_db_page, horse_id): num
+                for num, horse_id in missing if horse_id
+            }
+            for future in as_completed(futures):
+                num = futures[future]
+                try:
+                    stats = future.result()
+                    if stats:
+                        recent_stats_map[num] = stats
+                except Exception as ex:
+                    print(f"[predict] Stage2 error horse#{num}: {ex}")
+        stage2_ok = sum(1 for num, _ in missing if recent_stats_map.get(num, {}).get("positions"))
+        print(f"[predict] Stage2: {stage2_ok}/{len(missing)} 頭の補完完了")
+
+    # 3. horses_list に recent_stats + horse_id を追加
     horses_list = []
     for num_str, data in raw_horses.items():
         num = int(num_str)
         h = {"number": num, **{k: v for k, v in data.items() if not k.startswith('_')}}
-        h["recent_stats"] = recent_stats_map.get(num)  # None の場合はデフォルト評価にフォールバック
+        h["recent_stats"] = recent_stats_map.get(num)
+        h["horse_id"] = data.get("_horse_id")  # デバッグ・フロント表示用
         horses_list.append(h)
 
     # 4. User Profile Fetch (DNA)
