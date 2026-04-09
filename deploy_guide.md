@@ -5,7 +5,7 @@
 ### ステップ1：Githubへアップロード
 この `keiba_project` フォルダ全体をあなたの Github アカウントの新しいリポジトリ（例: `ai-keiba-v15`）にプッシュ（アップロード）してください。
 
-（※もしGitの設定がまだの場合、以下のコマンドをターミナルで実行してアップロードできます）
+（※もし Git の設定がまだの場合、以下のコマンドをターミナルで実行してアップロードできます）
 ```bash
 git init
 git add .
@@ -14,6 +14,20 @@ git branch -M main
 git remote add origin https://github.com/あなたのユーザー名/リポジトリ名.git
 git push -u origin main
 ```
+
+注意:
+- `https://<token>@github.com/...` のように Personal Access Token を remote URL に埋め込まないでください。
+- 初回 push 時は GitHub の認証が求められます。HTTPS を使う場合は、GitHub のユーザー名と、必要に応じて再生成したトークンを入力してください。
+- すでに token 付き URL を使っている場合は、先に以下で token なし URL へ戻してから push してください。
+
+```bash
+git remote set-url origin https://github.com/あなたのユーザー名/リポジトリ名.git
+git remote -v
+```
+
+補足:
+- Classic PAT は期限切れや権限過多の管理負荷があるため、可能なら Fine-grained PAT か SSH へ移行するのが安全です。
+- macOS の credential helper や GitHub CLI を使うと、毎回 remote URL に token を含めずに運用できます。
 
 ### ステップ2：Renderへ接続
 1. [Render.com](https://render.com/) にアクセスし、Githubアカウントでログイン（無料登録）します。

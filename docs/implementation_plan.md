@@ -10,6 +10,7 @@
 - UI は買い目生成中心から馬評価中心へ移行済み
 - ユーザー履歴を使う DNA 分析と simulation 画面を導入済み
 - PWA / Render 運用の基盤を整備済み
+- GitHub remote は token 直書きを避ける運用へ見直し中
 
 ## 実装の変遷サマリー
 
@@ -74,6 +75,7 @@
 - 馬評価 UI とスコアリングの精度改善を継続
 - 穴馬選出と DNA おすすめの精度調整
 - 実データ取得失敗時のフォールバック強化
+- GitHub 認証を PAT 埋め込み URL から credential helper / SSH ベースへ移行
 
 ### 優先度中
 - simulation 画面の分析軸追加
