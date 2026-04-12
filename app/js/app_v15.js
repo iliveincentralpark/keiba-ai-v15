@@ -54,9 +54,8 @@ function horseCard(h, role, rank) {
     };
     const r = roleMap[role];
 
-    // スコアのmax値（全馬の中での最大を基準にしたいが近似値で対応）
-    const scoreMax = 30;
-    const valueMax = 2.5;
+    const scoreMax   = 30;
+    const valueMax   = 2.5;
     const abilityMax = 1.5;
 
     const barColors = {
@@ -71,12 +70,23 @@ function horseCard(h, role, rank) {
         h.ability_source === 'time_index' ? '<span style="font-size:0.6rem;color:#8b949e;margin-left:5px;">📈指数</span>' :
         '<span style="font-size:0.6rem;color:#f85149;margin-left:5px;">⚠️取得失敗</span>';
 
-    const dnaBadge = (h.jiku_bonus > 1.0 || h.db_bonus > 1.0)
+    const dnaBadge = (h.jiku_bonus > 1.0 || h.venue_pop_bonus > 1.0)
         ? '<span style="background:#3fb950;color:#000;font-size:0.58rem;font-weight:900;padding:2px 6px;border-radius:4px;margin-left:6px;">🔥DNA</span>'
         : '';
 
-    // スコア内訳は削除（ai_commentに統合）
+    // V19: 適性バッジ行
+    const venueBadge     = (h.venue_bonus    >= 1.10) ? '<span style="background:rgba(88,166,255,0.2);color:#58a6ff;border:1px solid #58a6ff;font-size:0.58rem;padding:2px 5px;border-radius:4px;">🏟️コース◎</span>' :
+                           (h.venue_bonus    <= 0.88) ? '<span style="background:rgba(248,81,73,0.15);color:#f85149;border:1px solid #f85149;font-size:0.58rem;padding:2px 5px;border-radius:4px;">🏟️コース×</span>' : '';
+    const distBadge      = (h.distance_bonus >= 1.10) ? '<span style="background:rgba(63,185,80,0.2);color:#3fb950;border:1px solid #3fb950;font-size:0.58rem;padding:2px 5px;border-radius:4px;">🏁距離◎</span>' :
+                           (h.distance_bonus <= 0.88) ? '<span style="background:rgba(248,81,73,0.15);color:#f85149;border:1px solid #f85149;font-size:0.58rem;padding:2px 5px;border-radius:4px;">🏁距離×</span>' : '';
+    const bloodBadge     = (h.bloodline_bonus >= 1.10) ? '<span style="background:rgba(212,175,55,0.2);color:#d4af37;border:1px solid #d4af37;font-size:0.58rem;padding:2px 5px;border-radius:4px;">🧬血統◎</span>' :
+                           (h.bloodline_bonus <= 0.92) ? '<span style="background:rgba(248,81,73,0.15);color:#f85149;border:1px solid #f85149;font-size:0.58rem;padding:2px 5px;border-radius:4px;">🧬血統×</span>' : '';
+    const nameBadge      = (h.horse_name_bonus >= 1.15) ? '<span style="background:rgba(255,152,0,0.2);color:#ff9800;border:1px solid #ff9800;font-size:0.58rem;padding:2px 5px;border-radius:4px;">🅑CSV一致</span>' : '';
+
+    const aptitudeBadges = [venueBadge, distBadge, bloodBadge, nameBadge].filter(Boolean).join(' ');
+
     const comment = h.ai_comment || '';
+    const bd = h.score_breakdown || {};
 
     return `
         <div class="role-card ${r.cls}">
@@ -87,11 +97,16 @@ function horseCard(h, role, rank) {
                 <span>💴 ${h.odds}倍</span>
                 ${abilitySourceBadge}
             </div>
+            ${aptitudeBadges ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 4px;">${aptitudeBadges}</div>` : ''}
             ${scoreBar('総合', h.score, scoreMax, bc.score)}
             ${scoreBar('妙味', h.value, valueMax, bc.value)}
-            ${scoreBar('実力', h.ability_score, abilityMax, bc.ability)}
+            ${scoreBar('実力', h.enhanced_ability || h.ability_score, abilityMax, bc.ability)}
             ${h.upset_score > 0 ? scoreBar('穴', h.upset_score, 5, bc.upset) : ''}
             ${comment ? `<div class="reason-box ${r.cls}">💡 ${comment}</div>` : ''}
+            ${bd.venue_fit    ? `<div style="font-size:0.62rem;color:#58a6ff;margin-top:4px;">🏟️ ${bd.venue_fit}</div>` : ''}
+            ${bd.distance_fit ? `<div style="font-size:0.62rem;color:#3fb950;margin-top:2px;">🏁 ${bd.distance_fit}</div>` : ''}
+            ${bd.bloodline    ? `<div style="font-size:0.62rem;color:#d4af37;margin-top:2px;">🧬 ${bd.bloodline}</div>` : ''}
+            ${bd.name_match   ? `<div style="font-size:0.62rem;color:#ff9800;margin-top:2px;">${bd.name_match}</div>` : ''}
         </div>`;
 }
 
@@ -185,7 +200,7 @@ function renderApp(data) {
         html += `<div style="text-align:center;color:#555;font-size:0.72rem;padding:10px 0 6px;">🛡️ 穴馬候補なし（比較的堅いレース）</div>`;
     }
 
-    // ─── ② DNAマッチ馬セクション ───
+    // ─── ③ DNAマッチ馬セクション ───
     if (dna_horses && dna_horses.length > 0) {
         html += `<h2 style="font-size:0.78rem;color:#3fb950;letter-spacing:1px;margin:22px 0 10px;">▼ ⭐ あなたへのおすすめ</h2>
         <div style="background:rgba(63,185,80,0.07);border:1px solid rgba(63,185,80,0.3);border-radius:14px;padding:12px;margin-bottom:14px;">
@@ -209,7 +224,7 @@ function renderApp(data) {
         html += `</div>`;
     }
 
-    // ─── ② 全馬スコアテーブル ───
+    // ─── ④ 全馬AIスコアテーブル ───
     html += `
         <h2 style="font-size:0.78rem;color:#8b949e;letter-spacing:1px;margin:22px 0 10px;">▼ 全馬AIスコア</h2>
         <div style="border-radius:12px;overflow:hidden;background:#161b22;border:1px solid #333;margin-bottom:80px;">
@@ -220,6 +235,9 @@ function renderApp(data) {
                         <th>人/倍</th>
                         <th>妙味</th>
                         <th>実力</th>
+                        <th>🏟️</th>
+                        <th>🏁</th>
+                        <th>🧬</th>
                         <th>穴</th>
                         <th>総合</th>
                     </tr>
@@ -232,7 +250,10 @@ function renderApp(data) {
                         const roleMark  = isHonmei ? '◎' : isTaikou ? '○' : isAna ? '🎲' : '';
                         const nameColor = isHonmei ? '#d4af37' : isTaikou ? '#58a6ff' : isAna ? '#ff9800' : '#c9d1d9';
                         const srcBadge  = h.ability_source === 'recent' ? '📊' : h.ability_source === 'time_index' ? '📈' : '⚠️';
-                        const abilityColor = h.ability_source === 'default' ? '#f85149' : h.ability_score > 1.0 ? '#58a6ff' : '#fff';
+                        const abilityColor = h.ability_source === 'default' ? '#f85149' : (h.enhanced_ability||h.ability_score) > 1.0 ? '#58a6ff' : '#fff';
+                        const venueIcon = (h.venue_bonus >= 1.10) ? '🏟️' : (h.venue_bonus <= 0.88) ? '✖️' : '–';
+                        const distIcon  = (h.distance_bonus >= 1.10) ? '✅' : (h.distance_bonus <= 0.88) ? '❌' : '–';
+                        const bloodIcon = (h.bloodline_bonus >= 1.10) ? '⭐' : (h.bloodline_bonus <= 0.92) ? '✖️' : '–';
                         return `
                             <tr style="background:${i === 0 ? 'rgba(212,175,55,0.06)' : 'transparent'}">
                                 <td style="color:${nameColor};font-weight:${i < 3 ? '900' : '400'};">
@@ -241,9 +262,12 @@ function renderApp(data) {
                                 <td style="color:#8b949e;">${h.popularity}/${h.odds}</td>
                                 <td style="color:${h.value > 1.2 ? '#3fb950' : h.value < 0.8 ? '#f85149' : '#fff'};">${h.value.toFixed(2)}</td>
                                 <td style="color:${abilityColor};">
-                                    ${h.ability_score.toFixed(2)}<span style="font-size:0.55rem;color:#888;"> ${srcBadge}</span>
+                                    ${(h.enhanced_ability||h.ability_score).toFixed(2)}<span style="font-size:0.55rem;color:#888;"> ${srcBadge}</span>
                                     ${h.ability_source === 'default' ? '<span style="font-size:0.52rem;color:#f85149;display:block;">⚠️取得失敗</span>' : ''}
                                 </td>
+                                <td style="font-size:0.75rem;">${venueIcon}</td>
+                                <td style="font-size:0.75rem;">${distIcon}</td>
+                                <td style="font-size:0.75rem;">${bloodIcon}</td>
                                 <td>${(h.upset_score || 0) > 0.5 ? '🎲' : '-'}</td>
                                 <td style="font-weight:900;color:${i === 0 ? '#d4af37' : '#fff'};">${h.score.toFixed(1)}</td>
                             </tr>`;
@@ -252,7 +276,7 @@ function renderApp(data) {
             </table>
         </div>
         <p style="font-size:0.6rem;color:#555;text-align:center;margin-top:6px;padding-bottom:1rem;">
-            📊=近走成績 📈=タイム指数 ⚠️=スクレイプ失敗（スコア大幅減点） ／ 🎲=穴馬候補 ／ 🔥=ユーザーDNA一致
+            📊=近走成績 📈=タイム指数 ⚠️=スクレイプ失敗 ｜ 🏟️=競馬場適性 🏁=距離適性 🧬=血統適性 🎲=穴馬候補 🔥=ユーザーDNA
         </p>`;
 
     container.innerHTML = html;
@@ -298,4 +322,4 @@ document.addEventListener('DOMContentLoaded', () => {
     safeEl('fetch-odds-btn')?.addEventListener('click', fetchAnalysis);
 });
 
-console.log('App V16 — 馬評価特化モード — Active.');
+console.log('App V19 — データドリブン馬選出 — Active.');

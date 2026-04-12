@@ -15,9 +15,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 try:
     from .agents.manager import AgentManager
     from .database import init_db
+    from .agents.horse_detail_scraper import fetch_horse_full_detail
 except ImportError:
     from agents.manager import AgentManager
     from database import init_db
+    from agents.horse_detail_scraper import fetch_horse_full_detail
 
 app = FastAPI(title="Keiba Scraper API V5")
 agent_manager = AgentManager()
@@ -43,6 +45,91 @@ HEADERS = {
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
     'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
 }
+
+# ────────────────────────────────────────────────
+#  競馬場コード → 競馬場名
+# ────────────────────────────────────────────────
+VENUE_CODE_MAP = {
+    "01": "札幌", "02": "函館", "03": "福島", "04": "新潟",
+    "05": "東京", "06": "中山", "07": "中京", "08": "京都",
+    "09": "阪神", "10": "小倉",
+}
+
+_DIST_CATEGORIES_MAIN = [
+    (0,    1400, "sprint"),
+    (1400, 1700, "mile"),
+    (1700, 2200, "middle"),
+    (2200, 9999, "long"),
+]
+
+
+def _get_dist_category_main(dist_m: int) -> str:
+    for lo, hi, cat in _DIST_CATEGORIES_MAIN:
+        if lo <= dist_m < hi:
+            return cat
+    return "middle"
+
+
+def _parse_dist_category_csv(dist_str: str):
+    """CSVの距離フィールド (\"芝1600\", \"ダ1400\" 等) をカテゴリに変換"""
+    if not dist_str:
+        return None
+    m = re.search(r'(\d{3,4})', str(dist_str))
+    if not m:
+        return None
+    return _get_dist_category_main(int(m.group(1)))
+
+
+def _extract_race_condition(html: str) -> dict:
+    """HTMLからレースの距離・馬場を抽出（.RaceData01 など）"""
+    try:
+        soup = BeautifulSoup(html, 'html.parser')
+        surface = None
+        distance_m = None
+        for sel in ['.RaceData01', 'p.RaceData01', '.RaceData', '.race_data01']:
+            elem = soup.select_one(sel)
+            if elem:
+                text = elem.get_text(strip=True)
+                m = re.search(r'(芝|ダ(?:ート)?)\s*(\d{3,4})', text)
+                if m:
+                    surface = 'turf' if '芝' in m.group(1) else 'dirt'
+                    distance_m = int(m.group(2))
+                    break
+        # フォールバック: ページ全体テキストを走査
+        if not distance_m:
+            full_text = BeautifulSoup(html, 'html.parser').get_text()
+            m = re.search(r'(芝|ダート)\s*(\d{3,4})m', full_text)
+            if m:
+                surface = 'turf' if '芝' in m.group(1) else 'dirt'
+                distance_m = int(m.group(2))
+        return {"surface": surface, "distance_m": distance_m}
+    except Exception:
+        return {"surface": None, "distance_m": None}
+
+
+def extract_race_context(race_id: str, surface, distance_m) -> dict:
+    """race_id・距離・馬場からレースコンテキスト辞書を構築"""
+    venue_code   = race_id[4:6] if len(race_id) >= 6 else "00"
+    venue        = VENUE_CODE_MAP.get(venue_code, "不明")
+    dist_cat     = _get_dist_category_main(int(distance_m)) if distance_m else "middle"
+    return {
+        "venue":        venue,
+        "surface":      surface or "turf",
+        "distance_m":   distance_m,
+        "dist_category": dist_cat,
+    }
+
+
+def _get_rows_from_db():
+    """bet_history テーブルを全件取得"""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM bet_history")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
 def fetch_odds_api(race_id: str):
     """race.netkeiba.com の JSON APIからオッズ・人気取得"""
@@ -342,7 +429,7 @@ def parse_horses(html: str, race_id: str):
     return horses, race_name
 
 def _raw_scrape(race_id: str) -> dict:
-    """内部用スクレイプ。_horse_idを含む生データを返す"""
+    """内部用スクレイプ。_horse_id・距離・馬場を含む生データを返す"""
     urls = [
         f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}",
         f"https://db.netkeiba.com/race/{race_id}/"
@@ -355,7 +442,15 @@ def _raw_scrape(race_id: str) -> dict:
                 continue
             horses, r_name = parse_horses(res.text, race_id)
             if horses:
-                return {"success": True, "race_id": race_id, "race_name": r_name, "horses": horses}
+                cond = _extract_race_condition(res.text)
+                return {
+                    "success":    True,
+                    "race_id":    race_id,
+                    "race_name":  r_name,
+                    "horses":     horses,
+                    "surface":    cond.get("surface"),
+                    "distance_m": cond.get("distance_m"),
+                }
         except:
             continue
     return {"success": False}
@@ -380,17 +475,25 @@ def scrape_race(race_id: str):
 
 @app.get("/api/predict")
 def predict_race(race_id: str, budget: int = 10000):
-    """Agent Managerを使用してレースを予測する (V16: 近走成績取得追加)"""
+    """Agent Managerを使用してレースを予測する (V19: 適性3軸 + CSV🅐🅑🅒)"""
     race_id = race_id.strip()
     if not re.fullmatch(r'\d{12}', race_id):
         raise HTTPException(status_code=400, detail="Invalid ID")
 
-    # 1. スクレイピング（_horse_idを含む生データ）
+    # 1. スクレイピング（_horse_id・距離・馬場を含む生データ）
     res = _raw_scrape(race_id)
     if not res.get("success"):
         raise HTTPException(status_code=404, detail="Scrape failed")
 
     raw_horses = res["horses"]
+
+    # レースコンテキスト（競馬場・距離・馬場）
+    race_context = extract_race_context(
+        race_id,
+        surface=res.get("surface"),
+        distance_m=res.get("distance_m"),
+    )
+    print(f"[predict] race_context: {race_context}")
 
     # Stage1: shutuba_past.htmlから全馬一括取得
     print(f"[predict] Stage1: shutuba_past for {race_id}...")
@@ -425,30 +528,64 @@ def predict_race(race_id: str, budget: int = 10000):
         stage2_ok = sum(1 for num, _ in missing if recent_stats_map.get(num, {}).get("positions"))
         print(f"[predict] Stage2: {stage2_ok}/{len(missing)} 頭の補完完了")
 
+    # Stage3: 競馬場別・距離別成績＋血統を全馬並列取得（NEW V19）
+    horse_id_map = {
+        int(num_str): data.get("_horse_id")
+        for num_str, data in raw_horses.items()
+        if data.get("_horse_id")
+    }
+    detail_map: dict[int, dict] = {}
+    if horse_id_map:
+        print(f"[predict] Stage3: {len(horse_id_map)} 頭の馬詳細データ取得中...")
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            futures3 = {
+                executor.submit(fetch_horse_full_detail, horse_id): num
+                for num, horse_id in horse_id_map.items() if horse_id
+            }
+            for future in as_completed(futures3):
+                num = futures3[future]
+                try:
+                    detail = future.result()
+                    if detail:
+                        detail_map[num] = detail
+                except Exception as ex:
+                    print(f"[predict] Stage3 error horse#{num}: {ex}")
+        stage3_ok = sum(1 for d in detail_map.values() if d.get("venue_stats") or d.get("sire"))
+        print(f"[predict] Stage3: {stage3_ok}/{len(horse_id_map)} 頭の詳細データ取得完了")
+
     # 3. horses_list に recent_stats + horse_id を追加
     horses_list = []
     for num_str, data in raw_horses.items():
         num = int(num_str)
         h = {"number": num, **{k: v for k, v in data.items() if not k.startswith('_')}}
         h["recent_stats"] = recent_stats_map.get(num)
-        h["horse_id"] = data.get("_horse_id")  # デバッグ・フロント表示用
+        h["horse_id"] = data.get("_horse_id")
         horses_list.append(h)
 
-    # 4. User Profile Fetch (DNA)
+    # 4. User Profile（今日のコース・距離コンテキストを渡してABC計算）
     try:
-        profile_res = get_user_profile()
-        user_profile = profile_res.get("profile") if profile_res.get("success") else None
+        rows = _get_rows_from_db()
+        user_profile = build_user_profile(
+            rows,
+            today_venue=race_context["venue"],
+            today_dist_cat=race_context["dist_category"],
+        ) if rows else None
     except Exception:
         user_profile = None
 
-    # 5. Agent Managerによる予測
-    predictions = agent_manager.get_predictions(horses_list, budget, user_profile)
+    # 5. Agent Managerによる予測（V19: race_context・detail_map を渡す）
+    predictions = agent_manager.get_predictions(
+        horses_list, budget, user_profile,
+        race_context=race_context,
+        detail_map=detail_map,
+    )
 
     return {
-        "success": True,
-        "race_id": race_id,
-        "race_name": res["race_name"],
-        "predictions": predictions
+        "success":      True,
+        "race_id":      race_id,
+        "race_name":    res["race_name"],
+        "race_context": race_context,
+        "predictions":  predictions,
     }
 
 class BetHistoryItem(BaseModel):
@@ -503,15 +640,28 @@ def infer_axis_count(row: sqlite3.Row) -> int:
     return 0
 
 
-def build_user_profile(rows: list[sqlite3.Row]):
+def build_user_profile(
+    rows: list[sqlite3.Row],
+    today_venue: str = None,
+    today_dist_cat: str = None,
+):
+    """
+    過去履歴からユーザープロファイルを構築 (V19: 🅐🅑🅒 追加)
+    today_venue / today_dist_cat が渡されると 🅒 venue_pop_matrix を生成する。
+    """
     if not rows:
         return None
 
-    pop_stats = {}
-    pop_band_stats = {}
-    strategy_stats = {}
-    axis_stats = {}
+    pop_stats          = {}
+    pop_band_stats     = {}
+    strategy_stats     = {}
+    axis_stats         = {}
     preferred_point_sizes = []
+
+    # ── V19 新規 ──
+    venue_dist_matrix: dict[str, dict] = {}  # 🅐
+    known_horses:      dict[str, dict] = {}  # 🅑
+    venue_pop_matrix:  dict[str, dict] = {}  # 🅒
 
     for row in rows:
         is_hit = int(row["is_hit"] or 0)
@@ -521,36 +671,75 @@ def build_user_profile(rows: list[sqlite3.Row]):
         if points > 0:
             preferred_point_sizes.append(points)
 
+        venue    = str(row["venue"]    or "").strip()
+        dist_str = str(row["distance"] or "").strip()
+
+        # ── 既存: 人気帯・戦略・軸数集計 ──
         pops = parse_multi_value_numbers(row["jiku_pops"])
         if pops:
             pop = int(pops[0])
             pop_entry = pop_stats.setdefault(pop, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
             pop_entry["total"] += 1
-            pop_entry["hits"] += is_hit
+            pop_entry["hits"]  += is_hit
             pop_entry["amount"] += amount
             pop_entry["refund"] += refund
 
             band = "1-3人気" if pop <= 3 else "4-6人気" if pop <= 6 else "7人気以下"
             band_entry = pop_band_stats.setdefault(band, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
             band_entry["total"] += 1
-            band_entry["hits"] += is_hit
+            band_entry["hits"]  += is_hit
             band_entry["amount"] += amount
             band_entry["refund"] += refund
 
         strategy_key = (str(row["bet_type"] or "不明"), str(row["bet_method"] or "不明"))
-        strategy_entry = strategy_stats.setdefault(strategy_key, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
-        strategy_entry["total"] += 1
-        strategy_entry["hits"] += is_hit
-        strategy_entry["amount"] += amount
-        strategy_entry["refund"] += refund
+        se = strategy_stats.setdefault(strategy_key, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
+        se["total"] += 1
+        se["hits"]  += is_hit
+        se["amount"] += amount
+        se["refund"] += refund
 
         axis_count = infer_axis_count(row)
-        axis_entry = axis_stats.setdefault(axis_count, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
-        axis_entry["total"] += 1
-        axis_entry["hits"] += is_hit
-        axis_entry["amount"] += amount
-        axis_entry["refund"] += refund
+        ae = axis_stats.setdefault(axis_count, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
+        ae["total"] += 1
+        ae["hits"]  += is_hit
+        ae["amount"] += amount
+        ae["refund"] += refund
 
+        # ── 🅐 コース×距離カテゴリ 的中マトリクス ──
+        dist_cat = _parse_dist_category_csv(dist_str)
+        if venue and dist_cat:
+            vd_key = f"{venue}_{dist_cat}"
+            vde = venue_dist_matrix.setdefault(vd_key, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
+            vde["total"] += 1
+            vde["hits"]  += is_hit
+            vde["amount"] += amount
+            vde["refund"] += refund
+
+        # ── 🅑 馬名ベース追跡 (軸馬) ──
+        jiku_names_raw = str(row["jiku_names"] or "")
+        for name in [n.strip() for n in re.split(r'[|,]', jiku_names_raw) if n.strip()]:
+            e = known_horses.setdefault(name, {"jiku_hits": 0, "jiku_total": 0, "aite_hits": 0, "aite_total": 0})
+            e["jiku_total"] += 1
+            e["jiku_hits"]  += is_hit
+
+        # ── 🅑 馬名ベース追跡 (相手馬) ──
+        aite_names_raw = str(row["aite_names"] or "")
+        for name in [n.strip() for n in re.split(r'[|,]', aite_names_raw) if n.strip()]:
+            e = known_horses.setdefault(name, {"jiku_hits": 0, "jiku_total": 0, "aite_hits": 0, "aite_total": 0})
+            e["aite_total"] += 1
+            e["aite_hits"]  += is_hit
+
+        # ── 🅒 今日の競馬場 × 人気帯マトリクス ──
+        if today_venue and venue == today_venue and pops:
+            pop_for_c = int(pops[0])
+            pop_band_c = "1-3" if pop_for_c <= 3 else "4-6" if pop_for_c <= 6 else "7+"
+            vpc = venue_pop_matrix.setdefault(pop_band_c, {"hits": 0, "total": 0, "amount": 0, "refund": 0})
+            vpc["total"] += 1
+            vpc["hits"]  += is_hit
+            vpc["amount"] += amount
+            vpc["refund"] += refund
+
+    # ── 既存: pop_weights / strong_pops ──
     pop_weights = {}
     strong_pops = []
     for pop, stats in pop_stats.items():
@@ -568,12 +757,9 @@ def build_user_profile(rows: list[sqlite3.Row]):
         sample = stats["total"]
         score = (roi * 0.65 + hit_rate * 1.75) * math.log(sample + 1.0)
         strategy_rankings.append({
-            "bet_type": bet_type,
-            "bet_method": bet_method,
-            "sample_size": sample,
-            "hit_rate": round(hit_rate, 4),
-            "roi": round(roi, 4),
-            "score": round(score, 4),
+            "bet_type": bet_type, "bet_method": bet_method,
+            "sample_size": sample, "hit_rate": round(hit_rate, 4),
+            "roi": round(roi, 4), "score": round(score, 4),
         })
     strategy_rankings.sort(key=lambda item: (item["score"], item["sample_size"]), reverse=True)
 
@@ -583,26 +769,28 @@ def build_user_profile(rows: list[sqlite3.Row]):
         roi = stats["refund"] / stats["amount"] if stats["amount"] else 0
         score = (roi * 0.55 + hit_rate * 1.5) * math.log(stats["total"] + 1.0)
         axis_rankings.append({
-            "axis_count": axis_count,
-            "sample_size": stats["total"],
-            "hit_rate": round(hit_rate, 4),
-            "roi": round(roi, 4),
-            "score": round(score, 4),
+            "axis_count": axis_count, "sample_size": stats["total"],
+            "hit_rate": round(hit_rate, 4), "roi": round(roi, 4), "score": round(score, 4),
         })
     axis_rankings.sort(key=lambda item: (item["score"], item["sample_size"]), reverse=True)
 
     avg_points = round(sum(preferred_point_sizes) / len(preferred_point_sizes), 2) if preferred_point_sizes else 0
 
     return {
-        "strong_pops": sorted(strong_pops),
-        "pop_weights": pop_weights,
-        "pop_band_stats": pop_band_stats,
-        "strategy_rankings": strategy_rankings[:8],
+        # 既存フィールド
+        "strong_pops":        sorted(strong_pops),
+        "pop_weights":        pop_weights,
+        "pop_band_stats":     pop_band_stats,
+        "strategy_rankings":  strategy_rankings[:8],
         "preferred_strategies": strategy_rankings[:3],
-        "axis_rankings": axis_rankings,
+        "axis_rankings":      axis_rankings,
         "preferred_axis_count": axis_rankings[0]["axis_count"] if axis_rankings else 1,
-        "average_points": avg_points,
-        "total_records": len(rows),
+        "average_points":     avg_points,
+        "total_records":      len(rows),
+        # V19 新規フィールド
+        "venue_dist_matrix":  venue_dist_matrix,   # 🅐
+        "known_horses":       known_horses,          # 🅑
+        "venue_pop_matrix":   venue_pop_matrix,      # 🅒
     }
 
 
@@ -610,20 +798,13 @@ def build_user_profile(rows: list[sqlite3.Row]):
 def get_user_profile():
     """過去の履歴からユーザーの得意な人気帯、券種、買い方を分析する"""
     try:
-        conn = sqlite3.connect(DB_FILE)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT jiku_horses, jiku_pops, is_hit, bet_type, bet_method, points, amount, refund
-            FROM bet_history
-        """)
-        rows = cursor.fetchall()
-        conn.close()
+        rows = _get_rows_from_db()
         if not rows:
             return {"success": True, "profile": None}
         return {"success": True, "profile": build_user_profile(rows)}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
 
 
 @app.get("/api/status")

@@ -1,55 +1,95 @@
 import math
 
+try:
+    from .bloodline_data import get_bloodline_bonus, get_adjacent_dist_cats, SIRE_APTITUDE
+except ImportError:
+    from bloodline_data import get_bloodline_bonus, get_adjacent_dist_cats, SIRE_APTITUDE
+
+# 距離カテゴリの日本語表示マップ
+DIST_CAT_JP = {
+    "sprint": "短距離(<1400m)",
+    "mile":   "マイル(1400-1699m)",
+    "middle": "中距離(1700-2199m)",
+    "long":   "長距離(2200m+)",
+}
+DIST_CAT_JP_SHORT = {
+    "sprint": "短距離", "mile": "マイル", "middle": "中距離", "long": "長距離",
+}
+
 
 class ScoringAgent:
     def __init__(self):
         pass
 
-    def score_all_horses(self, horses_list, user_profile=None):
+    def score_all_horses(
+        self,
+        horses_list,
+        user_profile=None,
+        race_context=None,
+        detail_map=None,
+    ):
         """
-        全頭スコアリング (V16: 実力スコア強化 + 穴馬スコア追加)
-        horses_list: list of dicts with {number, name, odds, popularity, ability}
+        全頭スコアリング (V19: 競馬場・距離・血統適性 + CSV🅐🅑🅒 追加)
+        horses_list: list of dicts with {number, name, odds, popularity, ability, recent_stats}
+        race_context: {venue, surface, distance_m, dist_category}
+        detail_map: {horse_num: {venue_stats, dist_stats, sire, dam_sire}}
         """
+        rc  = race_context or {}
+        today_venue    = rc.get("venue", "")
+        today_surface  = rc.get("surface", "turf")
+        today_dist_cat = rc.get("dist_category", "")
+        dm  = detail_map or {}
+
         strong_jiku_pops = set(user_profile.get("strong_pops", [])) if user_profile else set()
         pop_weights = user_profile.get("pop_weights", {}) if user_profile else {}
+
+        # ── 🅐 コース×距離的中マトリクス → exponent boost ──
+        vd_key = f"{today_venue}_{today_dist_cat}" if today_venue and today_dist_cat else ""
+        vd_entry = (user_profile or {}).get("venue_dist_matrix", {}).get(vd_key, {})
+        vd_n = vd_entry.get("total", 0)
+        if vd_n >= 2 and vd_entry.get("amount", 0) > 0:
+            vd_roi = vd_entry["refund"] / vd_entry["amount"]
+            course_exp_boost = min(0.3, math.log(vd_n + 1) * 0.05 * max(0.0, vd_roi - 0.8))
+        else:
+            course_exp_boost = 0.0
+
         scored = []
 
         for h in horses_list:
-            raw_odds = h.get("odds")
+            raw_odds       = h.get("odds")
             raw_popularity = h.get("popularity")
             item = {
-                "number": int(h["number"]),
-                "name": h.get("name") or f"馬#{h['number']}",
-                "odds": float(raw_odds if raw_odds is not None else 999),
+                "number":     int(h["number"]),
+                "name":       h.get("name") or f"馬#{h['number']}",
+                "odds":       float(raw_odds if raw_odds is not None else 999),
                 "popularity": int(raw_popularity if raw_popularity is not None else 99),
-                "ability": h.get("ability") or {"max": 0, "avg": 0, "last": 0}
+                "ability":    h.get("ability") or {"max": 0, "avg": 0, "last": 0},
             }
-            item["has_valid_odds"] = raw_odds is not None and item["odds"] < 900
+            item["has_valid_odds"]       = raw_odds is not None and item["odds"] < 900
             item["has_valid_popularity"] = raw_popularity is not None and item["popularity"] < 90
 
-            # 1. 妙味 (Value): オッズ ÷ 人気別期待オッズ
+            # ── 1. 妙味 (Value) ──
             base = [0, 2.7, 4.8, 7.5, 11, 16, 24, 32, 48, 65]
             pop_idx = item["popularity"] if item["popularity"] < len(base) else 0
             exp = base[pop_idx] if pop_idx > 0 else item["popularity"] * 8
             item["value"] = item["odds"] / exp if exp > 0 else 0
+            item["expected_odds"] = exp
 
-            # 2. 実力スコア (V18: 着順差を大幅拡大、人気依存を完全排除)
-            ability = item["ability"]
+            # ── 2. 実力スコア (近走成績 or タイム指数) ──
+            ability      = item["ability"]
             recent_stats = h.get("recent_stats") or {}
-            positions = recent_stats.get("positions", [])
-            agari_times = recent_stats.get("agari", [])
+            positions    = recent_stats.get("positions", [])
+            agari_times  = recent_stats.get("agari", [])
 
-            # --- 近走生データを保存（ai_comment生成用） ---
             item["recent_positions"] = positions
-            item["avg_pos_raw"] = round(sum(positions) / len(positions), 1) if positions else None
-            item["top3_count"] = sum(1 for p in positions if p <= 3) if positions else 0
+            item["avg_pos_raw"]  = round(sum(positions) / len(positions), 1) if positions else None
+            item["top3_count"]   = sum(1 for p in positions if p <= 3) if positions else 0
             item["avg_agari_raw"] = round(sum(agari_times) / len(agari_times), 1) if agari_times else None
 
             if positions:
-                avg_pos = sum(positions) / len(positions)
+                avg_pos   = sum(positions) / len(positions)
                 top3_rate = sum(1 for p in positions if p <= 3) / len(positions)
 
-                # 連勝チェック（最新から連続して1着か）
                 consecutive_wins = 0
                 for p in positions:
                     if p == 1:
@@ -57,134 +97,168 @@ class ScoringAgent:
                     else:
                         break
 
-                # 着順→スコア変換（差が大きく出る設計）
-                # avg1着=1.50 / avg3着=1.25 / avg5着=1.00 / avg8着=0.63 / avg12着以下=0.35
                 pos_score = max(0.35, 1.5 - (avg_pos - 1.0) * 0.125)
-                pos_score += top3_rate * 0.18  # 3着以内率ボーナス
-
-                # 連勝ボーナス（直近2連勝+8%, 3連勝+16%, 4連勝+24%）
+                pos_score += top3_rate * 0.18
                 if consecutive_wins >= 2:
                     pos_score *= (1.0 + min(consecutive_wins, 4) * 0.08)
-
-                # 上がり3Fボーナス（35.5秒基準、速いほど加点）
                 if agari_times:
                     avg_agari = sum(agari_times) / len(agari_times)
                     agari_bonus = max(-0.08, min(0.12, (35.5 - avg_agari) * 0.04))
                     pos_score += agari_bonus
 
-                item["ability_score"] = min(2.0, max(0.35, pos_score))
+                item["ability_score"]  = min(2.0, max(0.35, pos_score))
                 item["ability_source"] = "recent"
             else:
-                raw_max = ability.get("max", 0)
-                raw_avg = ability.get("avg", 0)
+                raw_max  = ability.get("max", 0)
+                raw_avg  = ability.get("avg", 0)
                 raw_last = ability.get("last", 0)
                 if raw_max > 0 or raw_avg > 0 or raw_last > 0:
                     av = raw_last * 0.5 + raw_avg * 0.3 + raw_max * 0.2
-                    # タイム指数75点=1.0基準でスケーリング
-                    item["ability_score"] = max(0.3, min(1.6, av / 75.0))
+                    item["ability_score"]  = max(0.3, min(1.6, av / 75.0))
                     item["ability_source"] = "time_index"
                 else:
-                    # 近走・タイム指数ともに取得失敗 → 大幅ペナルティ（旧0.75→新0.40）
-                    item["ability_score"] = 0.40
+                    item["ability_score"]  = 0.40
                     item["ability_source"] = "default"
 
-            # expected_odds（妙味計算に使った期待オッズ）も保存
-            item["expected_odds"] = exp
-
-            # 3. 妙味係数 (V18: stability廃止 → 人気依存ゼロ。妙味は0.75〜1.35の補正係数のみ)
+            # ── 3. 妙味係数 ──
             if exp > 0 and item["has_valid_odds"]:
                 value_capped = min(max(item["value"], 0.3), 2.5)
                 item["value_factor"] = min(1.35, 0.75 + 0.24 * value_capped)
             else:
-                item["value_factor"] = 0.90  # オッズ未確定時
+                item["value_factor"] = 0.90
 
-            # 4. User Match (DNA) ボーナス
-            jiku_bonus = 1.22 if item["popularity"] in strong_jiku_pops else 1.0
-            pop_weight = float(pop_weights.get(str(item["popularity"]), 1.0))
-            if 4 <= item["popularity"] <= 6 and not pop_weights:
-                pop_weight = 1.08
-            if item["popularity"] == 1 and item["odds"] < 2.0:
-                pop_weight *= 0.82
-            db_bonus = pop_weight
+            # ── V19 NEW: 競馬場・距離・血統 適性ボーナス ──
+            detail      = dm.get(item["number"], {})
+            venue_stats = detail.get("venue_stats", {})
+            dist_stats  = detail.get("dist_stats", {})
+            sire        = detail.get("sire")
+            dam_sire    = detail.get("dam_sire")
+            item["sire"]     = sire
+            item["dam_sire"] = dam_sire
 
+            # 競馬場適性ボーナス (0.80 〜 1.35)
+            vs = venue_stats.get(today_venue, {}) if today_venue else {}
+            if vs.get("total", 0) >= 2:
+                wr = vs["win_rate"]
+                tr = vs["top3_rate"]
+                venue_bonus = min(1.35, max(0.80, 0.80 + wr * 1.30 + tr * 0.25))
+            elif today_venue and venue_stats:
+                # 他コースのデータはあるが今日のコースがない → 軽微ペナルティ
+                venue_bonus = 0.95
+            else:
+                venue_bonus = 1.00  # データなし → 中立
+
+            # 距離適性ボーナス (0.80 〜 1.30)
+            # まず surface+cat のキーで精密検索、次に cat のみで検索
+            surf_dist_key = f"{today_dist_cat}_{today_surface}" if today_dist_cat and today_surface else ""
+            ds = dist_stats.get(surf_dist_key) or dist_stats.get(today_dist_cat, {}) if today_dist_cat else {}
+            if ds.get("total", 0) >= 2:
+                wr = ds["win_rate"]
+                tr = ds["top3_rate"]
+                distance_bonus = min(1.30, max(0.80, 0.80 + wr * 1.20 + tr * 0.20))
+            elif today_dist_cat and dist_stats:
+                # 隣接距離から参照
+                adj = get_adjacent_dist_cats(today_dist_cat)
+                adj_vals = [
+                    dist_stats[c]["top3_rate"]
+                    for c in adj
+                    if c in dist_stats and dist_stats[c].get("total", 0) >= 2
+                ]
+                if adj_vals:
+                    distance_bonus = min(1.10, max(0.90, 0.90 + (sum(adj_vals) / len(adj_vals)) * 0.15))
+                else:
+                    distance_bonus = 0.95
+            else:
+                distance_bonus = 1.00  # データなし → 中立
+
+            # 血統適性ボーナス (0.88 〜 1.20)
+            bloodline_bonus = get_bloodline_bonus(sire, dam_sire, today_surface, today_dist_cat)
+
+            # 適性統合係数（加重平均: venue×40% + dist×40% + blood×20%）
+            aptitude_factor = venue_bonus * 0.40 + distance_bonus * 0.40 + bloodline_bonus * 0.20
+            
+            # V19: 適性の差を明確に出すため上限を3.0へ開放
+            enhanced_ability = min(3.0, max(0.10, item["ability_score"] * aptitude_factor))
+
+            item["venue_bonus"]      = round(venue_bonus, 3)
+            item["distance_bonus"]   = round(distance_bonus, 3)
+            item["bloodline_bonus"]  = round(bloodline_bonus, 3)
+            item["aptitude_factor"]  = round(aptitude_factor, 3)
+            item["enhanced_ability"] = round(enhanced_ability, 3)
+
+            # ── 4. User Match (DNA) ボーナス ──
+            # (リクエストにより一時無効化中: 全て1.0に固定)
+            jiku_bonus = 1.0
+            db_bonus = 1.0
             item["jiku_bonus"] = jiku_bonus
-            item["db_bonus"] = db_bonus
+            item["db_bonus"]   = db_bonus
 
-            # 5. 最終スコア (V18: stability廃止、ability^2.0を主軸)
-            # データなし(0.40^2=0.16) vs 連勝3回(1.86^2=3.46) → 22倍の差
-            # 人気1位でもデータなしなら中位以下に落ちる設計
-            ability_power = math.pow(max(item["ability_score"], 0.1), 2.0)
+            # ── 🅑 馬名ボーナス (一時無効化) ──
+            horse_name_bonus = 1.0
+            item["horse_name_bonus"] = horse_name_bonus
+
+            # ── 🅒 コース×人気帯ボーナス (一時無効化) ──
+            venue_pop_bonus = 1.0
+            item["venue_pop_bonus"] = venue_pop_bonus
+
+            # ── 5. 最終スコア (V19) ──
+            exponent      = 2.0 + course_exp_boost
+            ability_power = math.pow(max(item["enhanced_ability"], 0.10), exponent)
             item["score"] = (
                 ability_power
                 * item["value_factor"]
                 * jiku_bonus
-                * db_bonus
+                * venue_pop_bonus
+                * horse_name_bonus
                 * 4.5
             )
 
-            # 7. 穴馬スコア (V16改: 中穴〜大穴を正しく捕捉)
-            # 旧: ability_score >= 0.85 は「着順データなし → 0.75固定」で中人気馬が除外されるバグあり
-            # 新: 実力閾値を緩和し、オッズと妙味で穴度を判定
-            pop = item["popularity"]
-            has_market_data = item["has_valid_odds"] and item["has_valid_popularity"]
-            min_odds = 20.0
-            min_value = 0.50
-            min_ability = 0.68
-            if 5 <= pop <= 6:
-                min_odds = 8.0
-                min_value = 0.60
-            elif 7 <= pop <= 9:
-                min_odds = 12.0
-                min_value = 0.55
-            elif 10 <= pop <= 12:
-                min_odds = 18.0
-                min_value = 0.55
-            elif 13 <= pop <= 15:
-                min_odds = 25.0
-                min_value = 0.62
-                min_ability = 0.78
-            elif pop >= 16:
-                min_odds = 40.0
-                min_value = 0.70
-                min_ability = 0.90
+            # ── 6. 穴馬スコア（enhanced_ability を使用） ──
+            pop              = item["popularity"]
+            has_market_data  = item["has_valid_odds"] and item["has_valid_popularity"]
+            min_odds, min_value, min_ability = 20.0, 0.50, 0.68
 
+            if 5 <= pop <= 6:
+                min_odds, min_value = 8.0, 0.60
+            elif 7 <= pop <= 9:
+                min_odds, min_value = 12.0, 0.55
+            elif 10 <= pop <= 12:
+                min_odds, min_value = 18.0, 0.55
+            elif 13 <= pop <= 15:
+                min_odds, min_value, min_ability = 25.0, 0.62, 0.78
+            elif pop >= 16:
+                min_odds, min_value, min_ability = 40.0, 0.70, 0.90
+
+            eff_ability = item["enhanced_ability"]
             is_upset_candidate = (
                 has_market_data
-                and pop >= 5                   # 5人気以下（中穴〜大穴）
+                and pop >= 5
                 and item["odds"] >= min_odds
                 and item["value"] >= min_value
-                and item["ability_score"] >= min_ability
+                and eff_ability >= min_ability
             )
             if is_upset_candidate:
-                # 中穴帯を主役にしつつ、超人気薄は実力がないと上がりにくくする
-                value_factor = min(item["value"], 1.55)
-                odds_factor = min(math.log(item["odds"] + 1) / 5.0, 0.95)
-                if pop <= 6:
-                    popularity_factor = 1.12
-                elif pop <= 9:
-                    popularity_factor = 1.18
-                elif pop <= 12:
-                    popularity_factor = 1.05
-                elif pop <= 15:
-                    popularity_factor = 0.90
-                else:
-                    popularity_factor = 0.74
-                ability_factor = 0.85 + item["ability_score"] * 0.65
-                score_factor = 0.82 + min(item["score"], 4.0) * 0.07
+                value_factor      = min(item["value"], 1.55)
+                odds_factor       = min(math.log(item["odds"] + 1) / 5.0, 0.95)
+                popularity_factor = (
+                    1.12 if pop <= 6 else
+                    1.18 if pop <= 9 else
+                    1.05 if pop <= 12 else
+                    0.90 if pop <= 15 else 0.74
+                )
+                ability_factor = 0.85 + eff_ability * 0.65
+                score_factor   = 0.82 + min(item["score"], 4.0) * 0.07
                 item["upset_score"] = (
-                    (value_factor * 0.45 + odds_factor * 0.30 + item["ability_score"] * 0.25)
-                    * popularity_factor
-                    * ability_factor
-                    * score_factor
+                    (value_factor * 0.45 + odds_factor * 0.30 + eff_ability * 0.25)
+                    * popularity_factor * ability_factor * score_factor
                 )
             else:
                 item["upset_score"] = 0.0
 
-
-            # 8. スコア内訳（フロント表示用の根拠テキスト）
+            # ── 7. score_breakdown ──
             breakdown = {}
 
-            # 妙味の根拠
+            # 妙味
             if exp > 0:
                 if item["value"] > 1.3:
                     breakdown["value"] = f"オッズ {item['odds']}倍 ÷ {item['popularity']}人気の期待値 {exp}倍 = {item['value']:.2f}（お得水準）"
@@ -195,10 +269,10 @@ class ScoringAgent:
             else:
                 breakdown["value"] = "オッズデータなし"
 
-            # 実力の根拠
+            # 実力
             if item["ability_source"] == "recent" and positions:
                 avg_p = sum(positions) / len(positions)
-                top3 = sum(1 for p in positions if p <= 3)
+                top3  = sum(1 for p in positions if p <= 3)
                 agari_str = f"・平均上がり {sum(agari_times)/len(agari_times):.1f}秒" if agari_times else ""
                 breakdown["ability"] = (
                     f"近{len(positions)}走の平均着順 {avg_p:.1f}位（3着内 {top3}回）{agari_str}"
@@ -213,7 +287,7 @@ class ScoringAgent:
             else:
                 breakdown["ability"] = "近走・タイム指数ともにデータなし（未出走または取得失敗）"
 
-            # 妙味係数の根拠（V18: stability廃止、人気依存ゼロ）
+            # 妙味係数
             vf = item.get("value_factor", 1.0)
             if vf >= 1.20:
                 breakdown["stability"] = f"妙味係数 {vf:.2f}（オッズ割安 → スコア上乗せ）"
@@ -222,22 +296,77 @@ class ScoringAgent:
             else:
                 breakdown["stability"] = f"妙味係数 {vf:.2f}（オッズ割高 → スコア減点）"
 
-            # DNA（ユーザープロファイル）の根拠
+            # DNA（コース×人気帯ボーナス込み）
             if not user_profile:
                 breakdown["dna"] = "履歴データなし（simulation画面からCSVをインポートすると有効化）"
-            elif jiku_bonus > 1.0 and db_bonus > 1.05:
-                breakdown["dna"] = f"🔥 {item['popularity']}人気は過去の軸馬として的中実績あり＋人気帯の回収率も高い（+{(jiku_bonus*db_bonus-1)*100:.0f}%ボーナス）"
+            elif jiku_bonus > 1.0 and venue_pop_bonus > 1.05:
+                breakdown["dna"] = (
+                    f"🔥 {item['popularity']}人気は過去の軸馬として的中実績あり"
+                    f"＋{today_venue or ''}での回収率も高い（+{(jiku_bonus*venue_pop_bonus-1)*100:.0f}%ボーナス）"
+                )
             elif jiku_bonus > 1.0:
                 breakdown["dna"] = f"🔥 {item['popularity']}人気は過去の軸馬として的中実績あり（+{(jiku_bonus-1)*100:.0f}%ボーナス）"
-            elif db_bonus > 1.05:
-                breakdown["dna"] = f"📈 {item['popularity']}人気帯での回収率が高い傾向（×{db_bonus:.2f}倍ボーナス）"
-            elif db_bonus < 0.95:
-                breakdown["dna"] = f"📉 {item['popularity']}人気帯での回収率が低い傾向（×{db_bonus:.2f}倍ペナルティ）"
+            elif venue_pop_bonus > 1.05:
+                breakdown["dna"] = f"📈 {today_venue or ''}での{pop_band}人気帯の回収率が高い傾向（×{venue_pop_bonus:.2f}ボーナス）"
+            elif venue_pop_bonus < 0.95:
+                breakdown["dna"] = f"📉 {today_venue or ''}での{pop_band}人気帯の回収率が低い傾向（×{venue_pop_bonus:.2f}ペナルティ）"
             else:
                 breakdown["dna"] = "通常評価（この人気帯の的中・回収データは平均的）"
 
-            item["score_breakdown"] = breakdown
+            # 🏟️ 競馬場適性
+            if today_venue:
+                ve = venue_stats.get(today_venue, {})
+                if ve.get("total", 0) >= 2:
+                    grade = "◎" if venue_bonus >= 1.15 else "○" if venue_bonus >= 1.05 else "△" if venue_bonus >= 0.95 else "✗"
+                    breakdown["venue_fit"] = (
+                        f"{today_venue}{ve['total']}戦{ve['wins']}勝"
+                        f"（勝率{ve['win_rate']*100:.0f}% / 3着内率{ve['top3_rate']*100:.0f}%）"
+                        f" → 競馬場適性{grade}（×{venue_bonus:.2f}）"
+                    )
+                elif venue_stats:
+                    breakdown["venue_fit"] = f"{today_venue}での成績データなし（中立）"
+                else:
+                    breakdown["venue_fit"] = "競馬場成績データ取得失敗"
+            else:
+                breakdown["venue_fit"] = "競馬場情報未取得"
 
+            # 🏁 距離適性
+            cat_jp = DIST_CAT_JP.get(today_dist_cat, today_dist_cat)
+            if today_dist_cat:
+                de = dist_stats.get(f"{today_dist_cat}_{today_surface}") or dist_stats.get(today_dist_cat, {})
+                if de.get("total", 0) >= 2:
+                    grade = "◎" if distance_bonus >= 1.15 else "○" if distance_bonus >= 1.05 else "△" if distance_bonus >= 0.95 else "✗"
+                    breakdown["distance_fit"] = (
+                        f"{cat_jp}: {de['total']}戦{de['wins']}勝"
+                        f"（勝率{de['win_rate']*100:.0f}% / 3着内率{de['top3_rate']*100:.0f}%）"
+                        f" → 距離適性{grade}（×{distance_bonus:.2f}）"
+                    )
+                elif dist_stats:
+                    breakdown["distance_fit"] = f"{cat_jp}でのデータ少（隣接距離から推定：×{distance_bonus:.2f}）"
+                else:
+                    breakdown["distance_fit"] = "距離成績データ取得失敗"
+            else:
+                breakdown["distance_fit"] = "距離情報未取得"
+
+            # 🧬 血統
+            sire_disp   = sire or "不明"
+            surf_jp     = "芝" if today_surface == "turf" else "ダート"
+            cat_jp_s    = DIST_CAT_JP_SHORT.get(today_dist_cat, "")
+            in_table    = sire in SIRE_APTITUDE if sire else False
+            if bloodline_bonus >= 1.10:
+                breakdown["bloodline"] = f"父{sire_disp} × {surf_jp}{cat_jp_s} → 血統適性◎（×{bloodline_bonus:.2f}）"
+            elif bloodline_bonus >= 1.04:
+                breakdown["bloodline"] = f"父{sire_disp} × {surf_jp}{cat_jp_s} → 血統適性○（×{bloodline_bonus:.2f}）"
+            elif bloodline_bonus <= 0.93:
+                breakdown["bloodline"] = f"父{sire_disp} × {surf_jp}{cat_jp_s} → 血統適性✗（×{bloodline_bonus:.2f}）"
+            else:
+                note = "" if in_table else "（主要テーブルにない種牡馬）"
+                breakdown["bloodline"] = f"父{sire_disp}{note}（血統影響：中立）"
+
+            # 🅑 馬名マッチ (一時無効化)
+            breakdown["name_match"] = ""
+
+            item["score_breakdown"] = breakdown
             scored.append(item)
 
         # スコア順にソート

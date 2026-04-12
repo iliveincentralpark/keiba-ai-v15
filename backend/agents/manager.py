@@ -4,32 +4,31 @@ from .strategy_agent import StrategyAgent
 
 class AgentManager:
     def __init__(self):
-        self.scoring_agent = ScoringAgent()
+        self.scoring_agent  = ScoringAgent()
         self.strategy_agent = StrategyAgent()
 
     def _make_ai_comment(self, h, role):
         """
-        近走生データ・オッズ・DNA情報から人間が読めるコメントを生成 (V16)
-        数値の羅列ではなく、競馬ファンが使うような自然な説明文を生成する。
+        近走生データ・適性スコア・オッズ・DNA情報から人間が読めるコメントを生成 (V19)
+        競馬場・距離・血統適性のコメントを新たに追加。
         """
         parts = []
-        positions = h.get("recent_positions", [])
-        avg_pos = h.get("avg_pos_raw")
-        top3 = h.get("top3_count", 0)
-        avg_agari = h.get("avg_agari_raw")
-        odds = h.get("odds", 0)
-        pop = h.get("popularity", 99)
-        exp_odds = h.get("expected_odds", 0)
-        value = h.get("value", 0)
-        jiku_bonus = h.get("jiku_bonus", 1.0)
-        db_bonus = h.get("db_bonus", 1.0)
+        positions    = h.get("recent_positions", [])
+        avg_pos      = h.get("avg_pos_raw")
+        top3         = h.get("top3_count", 0)
+        avg_agari    = h.get("avg_agari_raw")
+        odds         = h.get("odds", 0)
+        pop          = h.get("popularity", 99)
+        exp_odds     = h.get("expected_odds", 0)
+        value        = h.get("value", 0)
+        jiku_bonus   = h.get("jiku_bonus", 1.0)
+        venue_pop_bonus = h.get("venue_pop_bonus", 1.0)
 
         # ── 近走成績コメント ──
         if positions:
-            n = len(positions)
+            n    = len(positions)
             wins = sum(1 for p in positions if p == 1)
 
-            # 連勝チェック（positionsは最新順）
             consec_wins = 0
             for p in positions:
                 if p == 1:
@@ -53,7 +52,6 @@ class AgentManager:
                 parts.append(f"近{n}走の平均着順{avg_pos}位と着実に上位")
             elif avg_pos:
                 parts.append(f"近{n}走の平均着順{avg_pos}位")
-
         else:
             source = h.get("ability_source", "default")
             if source == "default":
@@ -70,6 +68,32 @@ class AgentManager:
             elif avg_agari > 36.5:
                 parts.append(f"上がりは{avg_agari}秒とやや遅め")
 
+        # ── V19 NEW: 競馬場適性コメント ──
+        venue_bonus = h.get("venue_bonus", 1.00)
+        if venue_bonus >= 1.20:
+            parts.append("このコースを得意としている（競馬場適性◎）")
+        elif venue_bonus >= 1.08:
+            parts.append("このコースでの成績が良い（競馬場適性○）")
+        elif venue_bonus <= 0.86:
+            parts.append("このコースでの成績が振るわない（競馬場適性✗）")
+
+        # ── V19 NEW: 距離適性コメント ──
+        distance_bonus = h.get("distance_bonus", 1.00)
+        if distance_bonus >= 1.20:
+            parts.append("今日の距離で高い実績がある（距離適性◎）")
+        elif distance_bonus >= 1.08:
+            parts.append("今日の距離での成績が安定している（距離適性○）")
+        elif distance_bonus <= 0.86:
+            parts.append("今日の距離は苦手傾向（距離適性✗）")
+
+        # ── V19 NEW: 血統コメント ──
+        sire = h.get("sire")
+        bloodline_bonus = h.get("bloodline_bonus", 1.00)
+        if sire and bloodline_bonus >= 1.10:
+            parts.append(f"父{sire}の適性がこのレース条件にマッチ（血統適性◎）")
+        elif sire and bloodline_bonus <= 0.93:
+            parts.append(f"父{sire}の適性が今日の条件と不一致（血統注意）")
+
         # ── オッズ・妙味コメント ──
         if exp_odds > 0:
             if value > 1.4:
@@ -79,25 +103,25 @@ class AgentManager:
             elif value < 0.75:
                 parts.append(f"単勝{odds}倍は{pop}人気として過剰人気")
 
-        # ── 穴馬固有 ──
+        # ── 穴馬固有コメント ──
         if role == "ana":
             parts.append(f"{pop}番人気の低評価を覆す可能性に注目")
 
         # ── DNAコメント ──
-        if jiku_bonus > 1.0 and db_bonus > 1.05:
-            parts.append(f"あなたの{pop}人気軸での的中実績＋この人気帯の回収率が高い（DNA一致）")
+        if jiku_bonus > 1.0 and venue_pop_bonus > 1.05:
+            parts.append(f"あなたの{pop}人気軸での的中実績＋このコースでの回収率が高い（DNA一致）")
         elif jiku_bonus > 1.0:
             parts.append(f"あなたの過去の軸馬と同じ{pop}人気帯（DNA一致）")
-        elif db_bonus > 1.1:
-            parts.append(f"{pop}人気帯であなたの回収率が高い傾向（DNA参考）")
-        elif db_bonus < 0.90:
-            parts.append(f"{pop}人気帯はあなたの回収率が低め（注意）")
+        elif venue_pop_bonus > 1.1:
+            parts.append(f"このコースの{pop}人気帯でのあなたの回収率が高い傾向（DNA参考）")
+        elif venue_pop_bonus < 0.90:
+            parts.append(f"このコースの{pop}人気帯はあなたの回収率が低め（注意）")
 
         return "。".join(parts) + "。" if parts else "データが少なく評価困難。"
 
     def _build_horse_roles(self, scored):
         """
-        V16: 本命・対抗・穴馬・DNAマッチ馬を分類し、ai_commentを付与する
+        V19: 本命・対抗・穴馬・DNAマッチ馬を分類し、ai_commentを付与する
         """
         if not scored:
             return {}
@@ -105,6 +129,7 @@ class AgentManager:
         honmei = scored[0] if len(scored) >= 1 else None
         taikou = scored[1:3] if len(scored) >= 3 else scored[1:] if len(scored) >= 2 else []
         top_nums = {h["number"] for h in ([honmei] if honmei else []) + taikou}
+
         upset_candidates = sorted(
             [h for h in scored if h["number"] not in top_nums and h.get("upset_score", 0) > 0],
             key=lambda x: x["upset_score"], reverse=True
@@ -123,7 +148,7 @@ class AgentManager:
         dna_horses = [
             h for h in scored
             if h["number"] not in top_nums
-            and (h.get("jiku_bonus", 1.0) > 1.0 or h.get("db_bonus", 1.0) > 1.05)
+            and (h.get("jiku_bonus", 1.0) > 1.0 or h.get("venue_pop_bonus", 1.0) > 1.05)
         ][:2]
 
         # ai_comment を付与
@@ -137,22 +162,34 @@ class AgentManager:
             h["ai_comment"] = self._make_ai_comment(h, "dna")
 
         return {
-            "honmei": honmei,
-            "taikou": taikou,
-            "ana": ana,
+            "honmei":    honmei,
+            "taikou":    taikou,
+            "ana":       ana,
             "dna_horses": dna_horses,
         }
 
-    def get_predictions(self, horses_list, budget=10000, user_profile=None):
+    def get_predictions(
+        self,
+        horses_list,
+        budget=10000,
+        user_profile=None,
+        race_context=None,
+        detail_map=None,
+    ):
         """
-        エージェント間連携で最終的な予測結果を返す (V16)
+        エージェント間連携で最終的な予測結果を返す (V19)
+        race_context: {venue, surface, distance_m, dist_category}
+        detail_map:   {horse_num: {venue_stats, dist_stats, sire, dam_sire}}
         """
-        scored = self.scoring_agent.score_all_horses(horses_list, user_profile)
-        condition = self.strategy_agent.analyze_race_condition(scored)
+        scored      = self.scoring_agent.score_all_horses(
+            horses_list, user_profile, race_context, detail_map
+        )
+        condition   = self.strategy_agent.analyze_race_condition(scored)
         horse_roles = self._build_horse_roles(scored)
 
         return {
-            "scored": scored,
-            "condition": condition,
+            "scored":      scored,
+            "condition":   condition,
             "horse_roles": horse_roles,
+            "race_context": race_context or {},
         }
