@@ -70,9 +70,11 @@ function horseCard(h, role, rank) {
         h.ability_source === 'time_index' ? '<span style="font-size:0.6rem;color:#8b949e;margin-left:5px;">📈指数</span>' :
         '<span style="font-size:0.6rem;color:#f85149;margin-left:5px;">⚠️取得失敗</span>';
 
-    const dnaBadge = (h.jiku_bonus > 1.0 || h.venue_pop_bonus > 1.0)
-        ? '<span style="background:#3fb950;color:#000;font-size:0.58rem;font-weight:900;padding:2px 6px;border-radius:4px;margin-left:6px;">🔥DNA</span>'
-        : '';
+    const dnaBadge = (h.dna_match_level >= 2) ? '<span style="background:#3fb950;color:#000;font-size:0.58rem;font-weight:900;padding:2px 6px;border-radius:4px;margin-left:6px;">⭐DNA激推し</span>' :
+                     (h.dna_match_level >= 1) ? '<span style="background:rgba(63,185,80,0.3);color:#3fb950;border:1px solid #3fb950;font-size:0.58rem;padding:2px 4px;border-radius:4px;margin-left:6px;">⭐DNA</span>' : '';
+    
+    const dnaWarningBadge = (h.dna_warning_level >= 2) ? '<span style="background:#f85149;color:#000;font-size:0.58rem;font-weight:900;padding:2px 6px;border-radius:4px;margin-left:6px;">⚠️過去不振</span>' :
+                            (h.dna_warning_level >= 1) ? '<span style="background:rgba(248,81,73,0.3);color:#f85149;border:1px solid #f85149;font-size:0.58rem;padding:2px 4px;border-radius:4px;margin-left:6px;">⚠️苦手注意</span>' : '';
 
     // V19: 適性バッジ行
     const venueBadge     = (h.venue_bonus    >= 1.10) ? '<span style="background:rgba(88,166,255,0.2);color:#58a6ff;border:1px solid #58a6ff;font-size:0.58rem;padding:2px 5px;border-radius:4px;">🏟️コース◎</span>' :
@@ -91,7 +93,7 @@ function horseCard(h, role, rank) {
     return `
         <div class="role-card ${r.cls}">
             <div class="role-label ${r.cls}">${r.emoji} ${r.label}</div>
-            <div class="horse-main-name">${h.number}. ${h.name}${dnaBadge}</div>
+            <div class="horse-main-name">${h.number}. ${h.name}${dnaBadge}${dnaWarningBadge}</div>
             <div class="horse-sub-info">
                 <span>👤 ${h.popularity}人気</span>
                 <span>💴 ${h.odds}倍</span>
@@ -106,7 +108,7 @@ function horseCard(h, role, rank) {
             ${bd.venue_fit    ? `<div style="font-size:0.62rem;color:#58a6ff;margin-top:4px;">🏟️ ${bd.venue_fit}</div>` : ''}
             ${bd.distance_fit ? `<div style="font-size:0.62rem;color:#3fb950;margin-top:2px;">🏁 ${bd.distance_fit}</div>` : ''}
             ${bd.bloodline    ? `<div style="font-size:0.62rem;color:#d4af37;margin-top:2px;">🧬 ${bd.bloodline}</div>` : ''}
-            ${bd.name_match   ? `<div style="font-size:0.62rem;color:#ff9800;margin-top:2px;">${bd.name_match}</div>` : ''}
+            ${bd.name_match   ? `<div style="font-size:0.62rem;color:${h.dna_warning_level >= 1 ? '#f85149' : '#3fb950'};margin-top:2px;">${bd.name_match}</div>` : ''}
         </div>`;
 }
 

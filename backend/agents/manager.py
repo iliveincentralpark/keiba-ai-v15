@@ -111,13 +111,20 @@ class AgentManager:
         if jiku_bonus > 1.0 and venue_pop_bonus > 1.05:
             parts.append(f"あなたの{pop}人気軸での的中実績＋このコースでの回収率が高い（DNA一致）")
         elif jiku_bonus > 1.0:
-            parts.append(f"あなたの過去の軸馬と同じ{pop}人気帯（DNA一致）")
+            factors.append(f"あなたの過去の軸馬と同じ{pop}人気帯（DNA一致）")
         elif venue_pop_bonus > 1.1:
-            parts.append(f"このコースの{pop}人気帯でのあなたの回収率が高い傾向（DNA参考）")
+            factors.append(f"このコースの{pop}人気帯でのあなたの回収率が高い傾向（DNA参考）")
         elif venue_pop_bonus < 0.90:
-            parts.append(f"このコースの{pop}人気帯はあなたの回収率が低め（注意）")
+            factors.append(f"このコースの{pop}人気帯はあなたの回収率が低め（注意）")
 
-        return "。".join(parts) + "。" if parts else "データが少なく評価困難。"
+        # ── DNA警告の反映 ──
+        if role == "honmei" and h.get("dna_warning_level", 0) >= 1:
+            warn_txt = h.get("dna_warning_text", "苦手条件")
+            factors.append(f"⚠️ユーザーが外しがちな条件({warn_txt})のため、絶対の軸には非推奨です。")
+        elif h.get("dna_match_level", 0) >= 1:
+            factors.append("⭐ユーザーの過去の的中傾向とマッチする得意条件です。")
+            
+        return " ".join(factors) if factors else "データが少なく評価困難。"
 
     def _build_horse_roles(self, scored):
         """
@@ -148,7 +155,7 @@ class AgentManager:
         dna_horses = [
             h for h in scored
             if h["number"] not in top_nums
-            and (h.get("jiku_bonus", 1.0) > 1.0 or h.get("venue_pop_bonus", 1.0) > 1.05)
+            and h.get("dna_match_level", 0) >= 1
         ][:2]
 
         # ai_comment を付与

@@ -186,30 +186,60 @@ class ScoringAgent:
             item["aptitude_factor"]  = round(aptitude_factor, 3)
             item["enhanced_ability"] = round(enhanced_ability, 3)
 
-            # ── 4. User Match (DNA) ボーナス ──
-            # (リクエストにより一時無効化中: 全て1.0に固定)
-            jiku_bonus = 1.0
-            db_bonus = 1.0
-            item["jiku_bonus"] = jiku_bonus
-            item["db_bonus"]   = db_bonus
+            # ── 4. User Match (DNA) ボーナス（V20案2: スコアは変えず、警告/推奨バッジのみ付与） ──
+            # jiku_pops, vpm(venue_pop), horse_name(known) を使って分析
+            warning_level = 0
+            warning_text = ""
+            match_level = 0
+            match_text = ""
 
-            # ── 🅑 馬名ボーナス (一時無効化) ──
-            horse_name_bonus = 1.0
-            item["horse_name_bonus"] = horse_name_bonus
+            # (1) 馬名の相性
+            known = (user_profile or {}).get("known_horses", {}).get(item["name"].strip(), {})
+            jiku_total = known.get("jiku_total", 0)
+            jiku_hits  = known.get("jiku_hits", 0)
+            aite_hits  = known.get("aite_hits", 0)
 
-            # ── 🅒 コース×人気帯ボーナス (一時無効化) ──
-            venue_pop_bonus = 1.0
-            item["venue_pop_bonus"] = venue_pop_bonus
+            if jiku_total >= 2:
+                jiku_rate = jiku_hits / jiku_total
+                if jiku_rate == 0.0:
+                    warning_level = max(warning_level, 2)
+                    warning_text += f"[軸馬不振: {jiku_total}戦0勝]"
+                elif jiku_rate >= 0.5:
+                    match_level = max(match_level, 2)
+                    match_text += f"[相性抜群: {jiku_total}戦{jiku_hits}勝]"
+            elif jiku_total == 1 and jiku_hits == 1:
+                match_level = max(match_level, 1)
 
-            # ── 5. 最終スコア (V19) ──
+            # (2) コース×人気帯の相性
+            pop_band = "1-3" if item["popularity"] <= 3 else "4-6" if item["popularity"] <= 6 else "7+"
+            vpm = (user_profile or {}).get("venue_pop_matrix", {}).get(pop_band, {})
+            vpm_n = vpm.get("total", 0)
+            if vpm_n >= 2:
+                hit_rate = vpm["hits"] / vpm_n
+                if hit_rate <= 0.10:
+                    warning_level = max(warning_level, 1)
+                    warning_text += f"[{today_venue}×{pop_band}人気勝率{int(hit_rate*100)}%]"
+                elif hit_rate >= 0.50:
+                    match_level = max(match_level, 1)
+                    match_text += f"[{today_venue}×{pop_band}人気得意]"
+
+            # スコアへの掛け算は行わない（1.0で固定し純粋なデータドリブンを維持）
+            item["jiku_bonus"] = 1.0
+            item["db_bonus"]   = 1.0
+            item["horse_name_bonus"] = 1.0
+            item["venue_pop_bonus"]  = 1.0
+            
+            item["dna_warning_level"] = warning_level
+            item["dna_warning_text"] = warning_text
+            item["dna_match_level"] = match_level
+            item["dna_match_text"] = match_text
+
+            # ── 5. 最終スコア (V19/20) ──
             exponent      = 2.0 + course_exp_boost
             ability_power = math.pow(max(item["enhanced_ability"], 0.10), exponent)
             item["score"] = (
                 ability_power
                 * item["value_factor"]
-                * jiku_bonus
-                * venue_pop_bonus
-                * horse_name_bonus
                 * 4.5
             )
 
@@ -363,8 +393,18 @@ class ScoringAgent:
                 note = "" if in_table else "（主要テーブルにない種牡馬）"
                 breakdown["bloodline"] = f"父{sire_disp}{note}（血統影響：中立）"
 
-            # 🅑 馬名マッチ (一時無効化)
-            breakdown["name_match"] = ""
+            # 🅑 ユーザーDNA（警告・相性）
+            dna_msg = ""
+            if warning_level >= 2:
+                dna_msg = f"⚠️ 危険パターン: {warning_text}"
+            elif warning_level >= 1:
+                dna_msg = f"⚠️ 苦手注意: {warning_text}"
+            elif match_level >= 2:
+                dna_msg = f"⭐ 激アツ条件: {match_text}"
+            elif match_level >= 1:
+                dna_msg = f"⭐ 得意条件: {match_text}"
+                
+            breakdown["name_match"] = dna_msg
 
             item["score_breakdown"] = breakdown
             scored.append(item)
