@@ -165,7 +165,8 @@
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                navigator.serviceWorker.register('sw.js')
+                const swUrl = new URL('/sw.js', window.location.origin).toString();
+                navigator.serviceWorker.register(swUrl)
                     .then(reg => console.log('SW registered', reg))
                     .catch(e => console.error('SW failed', e));
             });

@@ -6,6 +6,17 @@
 let currentData = null;
 function safeEl(id) { return document.getElementById(id); }
 
+function buildApiUrl(path, query = {}) {
+    const base = window.location?.origin || window.location?.href || '/';
+    const url = new URL(path, base);
+    Object.entries(query).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') {
+            url.searchParams.set(key, String(value));
+        }
+    });
+    return url.toString();
+}
+
 /** ── プロフィールステータス ── */
 function formatProfileSummary(profile) {
     if (!profile) return '履歴データ未読込（simulation画面からCSVを追加できます）';
@@ -19,7 +30,7 @@ async function loadProfileStatus() {
     const el = safeEl('profile-status');
     if (!el) return;
     try {
-        const res = await fetch('/api/status');
+        const res = await fetch(buildApiUrl('/api/status'));
         const data = await res.json();
         el.textContent = data.success ? formatProfileSummary(data.profile) : '';
     } catch { el.textContent = ''; }
@@ -304,7 +315,10 @@ async function fetchAnalysis() {
         </div>`;
 
     try {
-        const res = await fetch(`/api/predict?race_id=${match[1]}&budget=1000`);
+        const res = await fetch(buildApiUrl('/api/predict', {
+            race_id: match[1],
+            budget: 1000,
+        }));
         const data = await res.json();
         if (data.success) {
             currentData = data;
