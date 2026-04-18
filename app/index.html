@@ -165,15 +165,14 @@
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', () => {
-                const swUrl = new URL('/sw.js', window.location.origin).toString();
-                navigator.serviceWorker.register(swUrl)
+                navigator.serviceWorker.register('/sw.js')
                     .then(reg => console.log('SW registered', reg))
                     .catch(e => console.error('SW failed', e));
             });
         }
     </script>
     <!-- V16 メインスクリプト -->
-    <script src="js/app_v15.js"></script>
+    <script src="js/app_v15.js?v=20260418b"></script>
 </body>
 
 </html>

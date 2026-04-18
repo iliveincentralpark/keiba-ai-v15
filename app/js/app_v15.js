@@ -6,15 +6,16 @@
 let currentData = null;
 function safeEl(id) { return document.getElementById(id); }
 
+function normalizeDigits(value) {
+    return String(value || '').replace(/[０-９]/g, (s) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0));
+}
+
 function buildApiUrl(path, query = {}) {
-    const base = window.location?.origin || window.location?.href || '/';
-    const url = new URL(path, base);
-    Object.entries(query).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== '') {
-            url.searchParams.set(key, String(value));
-        }
-    });
-    return url.toString();
+    const params = Object.entries(query)
+        .filter(([, value]) => value !== undefined && value !== null && value !== '')
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`);
+    const queryString = params.length ? `?${params.join('&')}` : '';
+    return `${path}${queryString}`;
 }
 
 /** ── プロフィールステータス ── */
@@ -40,6 +41,16 @@ async function loadProfileStatus() {
 function showError(msg) {
     const c = safeEl('results-container');
     if (c) c.innerHTML = `<div style="padding:2rem;color:#f85149;text-align:center;border:1px solid #f85149;border-radius:12px;margin:1rem 0;">⚠️ ${msg}</div>`;
+}
+
+function formatErrorMessage(error, context = {}) {
+    const parts = [];
+    if (error?.name) parts.push(error.name);
+    if (error?.message) parts.push(error.message);
+    if (context.raceId) parts.push(`race_id=${context.raceId}`);
+    if (context.requestUrl) parts.push(`request=${context.requestUrl}`);
+    if (context.status) parts.push(`status=${context.status}`);
+    return parts.join(' | ') || '不明なエラー';
 }
 
 /** ── スコアをバー表示するHTML ── */
@@ -299,7 +310,7 @@ function renderApp(data) {
 async function fetchAnalysis() {
     const urlEl = safeEl('netkeiba-url');
     if (!urlEl) return;
-    const urlValue = urlEl.value.trim();
+    const urlValue = normalizeDigits(urlEl.value).trim();
     const match = urlValue.match(/race_id=(\d{12})/) || urlValue.match(/race\/(\d{12})/) || urlValue.match(/(\d{12})/);
     if (!match) { showError('netkeibaのURLまたは12桁のレースIDを入力してください'); return; }
 
@@ -315,10 +326,19 @@ async function fetchAnalysis() {
         </div>`;
 
     try {
-        const res = await fetch(buildApiUrl('/api/predict', {
+        const requestUrl = buildApiUrl('/api/predict', {
             race_id: match[1],
             budget: 1000,
-        }));
+        });
+        const res = await fetch(requestUrl, {
+            method: 'GET',
+            headers: { 'Accept': 'application/json' },
+        });
+        if (!res.ok) {
+            const detail = await res.text().catch(() => '');
+            showError(`APIエラー: status=${res.status}${detail ? ` | ${detail.slice(0, 180)}` : ''}`);
+            return;
+        }
         const data = await res.json();
         if (data.success) {
             currentData = data;
@@ -327,7 +347,10 @@ async function fetchAnalysis() {
             showError('データ取得に失敗しました');
         }
     } catch (e) {
-        showError(e.message);
+        showError(formatErrorMessage(e, {
+            raceId: match[1],
+            requestUrl: buildApiUrl('/api/predict', { race_id: match[1], budget: 1000 }),
+        }));
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = '解析スタート 🔍'; }
     }

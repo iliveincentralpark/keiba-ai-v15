@@ -329,17 +329,17 @@ class ScoringAgent:
             # DNA（コース×人気帯ボーナス込み）
             if not user_profile:
                 breakdown["dna"] = "履歴データなし（simulation画面からCSVをインポートすると有効化）"
-            elif jiku_bonus > 1.0 and venue_pop_bonus > 1.05:
+            elif item["jiku_bonus"] > 1.0 and item["venue_pop_bonus"] > 1.05:
                 breakdown["dna"] = (
                     f"🔥 {item['popularity']}人気は過去の軸馬として的中実績あり"
-                    f"＋{today_venue or ''}での回収率も高い（+{(jiku_bonus*venue_pop_bonus-1)*100:.0f}%ボーナス）"
+                    f"＋{today_venue or ''}での回収率も高い（+{(item['jiku_bonus']*item['venue_pop_bonus']-1)*100:.0f}%ボーナス）"
                 )
-            elif jiku_bonus > 1.0:
-                breakdown["dna"] = f"🔥 {item['popularity']}人気は過去の軸馬として的中実績あり（+{(jiku_bonus-1)*100:.0f}%ボーナス）"
-            elif venue_pop_bonus > 1.05:
-                breakdown["dna"] = f"📈 {today_venue or ''}での{pop_band}人気帯の回収率が高い傾向（×{venue_pop_bonus:.2f}ボーナス）"
-            elif venue_pop_bonus < 0.95:
-                breakdown["dna"] = f"📉 {today_venue or ''}での{pop_band}人気帯の回収率が低い傾向（×{venue_pop_bonus:.2f}ペナルティ）"
+            elif item["jiku_bonus"] > 1.0:
+                breakdown["dna"] = f"🔥 {item['popularity']}人気は過去の軸馬として的中実績あり（+{(item['jiku_bonus']-1)*100:.0f}%ボーナス）"
+            elif item["venue_pop_bonus"] > 1.05:
+                breakdown["dna"] = f"📈 {today_venue or ''}での{pop_band}人気帯の回収率が高い傾向（×{item['venue_pop_bonus']:.2f}ボーナス）"
+            elif item["venue_pop_bonus"] < 0.95:
+                breakdown["dna"] = f"📉 {today_venue or ''}での{pop_band}人気帯の回収率が低い傾向（×{item['venue_pop_bonus']:.2f}ペナルティ）"
             else:
                 breakdown["dna"] = "通常評価（この人気帯の的中・回収データは平均的）"
 
